@@ -404,7 +404,20 @@ class Printer {
     }
   }
   async close() {
-    try { this.reader.releaseLock(); this.writer.releaseLock(); await this.port.close(); } catch (_) {}
+    // A read is very likely still outstanding here: untilOk() exits through
+    // timeout or force-stop precisely when the printer has gone silent, and
+    // releaseLock() throws while a read is pending. Sharing one try across all
+    // four steps meant that throw skipped the writer release and port.close()
+    // too, leaving the port held open -- so the next connection attempt failed
+    // until the page was reloaded, in exactly the situation where the user
+    // wants to reconnect. cancel() settles the pending read first, and each
+    // step gets its own try so one failure cannot skip the rest.
+    try { await this.reader.cancel(); } catch (_) {}
+    try { await this.pending; } catch (_) {}
+    this.pending = null;
+    try { this.reader.releaseLock(); } catch (_) {}
+    try { this.writer.releaseLock(); } catch (_) {}
+    try { await this.port.close(); } catch (_) {}
   }
 }
 
