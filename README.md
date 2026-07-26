@@ -19,7 +19,9 @@ that gap without requiring a custom firmware build.
 ## Before you run it
 
 These are **menu-only settings on the printer**. Nothing here can read or change
-them for you, and each one fails *silently* rather than loudly:
+them for you, and each one fails *silently* rather than loudly. The buttons stay
+disabled until you confirm each item, because a paragraph of warnings gets
+skimmed and the consequences here are not recoverable by reading further:
 
 | Do this | Why |
 |---|---|
@@ -39,8 +41,13 @@ restore. Prompts appear on the **printer's** screen and wait for a knob press,
 so your hands are at the machine where the work happens.
 
 Success looks like **three thin strands with visible dark debris**. Repeat until
-the tip comes out clean — typically one to three cycles — then re-enable the
-sensor and auto retract and refit the PTFE tube.
+the tip comes out clean, typically one to three cycles.
+
+**Then put the settings back.** Filament Sensor on, Auto Retract on, PTFE tube
+refitted. The page shows this reminder once you download a file or finish a run,
+because the settings you turned off stay off, and a printer left that way will
+not detect a runout and will not retract at the end of a print, which invites the
+next clog.
 
 If nothing extrudes during the purge, the blockage is *above* the melt zone and
 a cold pull cannot reach it. Stop there.

@@ -41,8 +41,15 @@
   ul.checks { list-style: none; margin: 0; padding: 0; }
   ul.checks li { padding: .5rem 0; border-bottom: 1px solid var(--line); }
   ul.checks li:last-child { border-bottom: 0; }
-  ul.checks b { font-weight: 600; }
+  ul.checks b { font-weight: 600; display: block; color: var(--fg); }
   ul.checks span { display: block; color: var(--muted); font-size: .875rem; }
+  label.ck { display: flex; gap: .6rem; align-items: flex-start; cursor: pointer; }
+  label.ck input { width: 1.05rem; height: 1.05rem; margin: .3rem 0 0; flex: 0 0 auto; accent-color: var(--accent); }
+  .gate-msg { color: var(--muted); font-size: .875rem; margin: .6rem 0 0; }
+  .restore { border-color: var(--ok); background: var(--card); border-left: 4px solid var(--ok); margin-top: 1rem; }
+  .restore h3 { margin: 0 0 .5rem; font-size: 1rem; }
+  .restore ol { margin: 0; padding-left: 1.2rem; }
+  .restore ol li { padding: .18rem 0; }
   .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); gap: 1rem; }
   label { display: block; font-size: .8rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-bottom: .3rem; }
   select, input {
@@ -91,16 +98,21 @@
       can check them for you. Each fails <em>silently</em> rather than loudly.
     </p>
     <ul class="checks">
-      <li><b>Filament Sensor → OFF</b>
-        <span>Otherwise the printer grabs and autoloads the filament while you are inserting it by hand.</span></li>
-      <li><b>Auto Retract → OFF</b>
-        <span>Otherwise the printer can treat the filament as retracted and discard the extrusion and pull moves — the procedure appears to run while nothing happens.</span></li>
-      <li><b>Remove the PTFE tube from this tool</b>
-        <span>The pulled plug travels up and out of the top port. With the tube fitted there is nowhere for it to go.</span></li>
-      <li><b>Light-coloured PLA on hand, and stay at the printer</b>
-        <span>PLA shows the extracted debris clearly. The procedure waits for knob presses at five points, and the heaters switch off after ~30 minutes unattended.</span></li>
-      <li id="serial-prereq" hidden><b>USB Serial only: “Serial Printing Screen” → OFF, then reboot</b>
-        <span>Settings → Hardware → Experimental Settings. Left on, a 5-second inactivity timeout runs the end-of-print sequence mid-procedure, docking the tool while commands are still being sent. This crashes the printer with <code>E move without tool</code>.</span></li>
+      <li><label class="ck"><input type="checkbox" class="gate-common">
+        <span><b>Filament Sensor → OFF</b>
+        Otherwise the printer grabs and autoloads the filament while you are inserting it by hand.</span></label></li>
+      <li><label class="ck"><input type="checkbox" class="gate-common">
+        <span><b>Auto Retract → OFF</b>
+        Otherwise the printer can treat the filament as retracted and discard the extrusion and pull moves. The procedure appears to run while nothing happens.</span></label></li>
+      <li><label class="ck"><input type="checkbox" class="gate-common">
+        <span><b>PTFE tube removed from this tool</b>
+        The pulled plug travels up and out of the top port. With the tube fitted there is nowhere for it to go.</span></label></li>
+      <li><label class="ck"><input type="checkbox" class="gate-common">
+        <span><b>Light-coloured PLA on hand, and you will stay at the printer</b>
+        PLA shows the extracted debris clearly. The procedure waits for knob presses at five points, and the heaters switch off after ~30 minutes unattended.</span></label></li>
+      <li id="serial-prereq"><label class="ck"><input type="checkbox" id="gate-serial">
+        <span><b>USB Serial only: “Serial Printing Screen” → OFF, then reboot</b>
+        Settings → Hardware → Experimental Settings. Left on, a 5-second inactivity timeout runs the end-of-print sequence mid-procedure, docking the tool while commands are still being sent. This crashes the printer with <code>E move without tool</code>. Not needed for the G-code download.</span></label></li>
     </ul>
   </div>
 
@@ -132,14 +144,32 @@
   </p>
 
   <div class="actions">
-    <button id="download">Download G-code</button>
-    <button id="run" class="ghost">Run over USB Serial</button>
+    <button id="download" disabled>Download G-code</button>
+    <button id="run" class="ghost" disabled>Run over USB Serial</button>
     <button id="cancel" class="ghost" hidden>Cancel</button>
     <button id="force" class="ghost" hidden>Force stop</button>
   </div>
+  <p class="gate-msg" id="gate-msg"></p>
   <p class="note" id="serial-note" style="margin:.7rem 0 0"></p>
 
   <div id="log" aria-live="polite"></div>
+
+  <!-- Shown once a run finishes or a file is downloaded. The settings turned
+       off above stay off until the user puts them back, and a printer left
+       that way will misbehave on the next ordinary print. -->
+  <div class="card restore" id="restore" hidden>
+    <h3 id="restore-title">Before your next print, put these back</h3>
+    <ol>
+      <li><b>Filament Sensor → ON</b><br>
+        <span class="note">Left off, the printer will not detect a runout or jam during normal printing.</span></li>
+      <li><b>Auto Retract → ON</b><br>
+        <span class="note">Left off, filament is not retracted out of the melt zone at the end of a print, which invites the next clog.</span></li>
+      <li><b>Refit the PTFE tube</b><br>
+        <span class="note">Printing without it will not feed reliably.</span></li>
+      <li id="restore-serial" hidden><b>“Serial Printing Screen” → back ON, if you want it</b><br>
+        <span class="note">Optional. Only affects the serial-print UI, not printing itself.</span></li>
+    </ol>
+  </div>
 
   <h2>What it does</h2>
   <table>
@@ -311,6 +341,45 @@ function settings() {
   return { tool: nozzle - 1, nozzle, flush, pull };
 }
 
+/* ---------- Pre-flight gate ----------
+   The prerequisites are menu-only settings the page can neither read nor set,
+   and each fails silently: Auto Retract left on makes the whole procedure a
+   no-op with a hot nozzle. A wall of text gets skimmed, so the buttons stay
+   disabled until each item is explicitly confirmed.
+
+   Route-aware, matching the desktop version: "Serial Printing Screen" only
+   affects a serial session, so it gates the serial button alone. Demanding it
+   (plus a printer reboot) from someone downloading a file would be asking for
+   a change that cannot affect their run. */
+const commonGates = [...document.querySelectorAll(".gate-common")];
+const serialGate = $("gate-serial");
+
+function updateGate() {
+  const commonOk = commonGates.every((c) => c.checked);
+  const remaining = commonGates.filter((c) => !c.checked).length;
+  $("download").disabled = !commonOk;
+  $("run").disabled = !commonOk || !serialGate.checked || !serialSupported || running;
+
+  let msg = "";
+  if (!commonOk) {
+    msg = `Confirm ${remaining} more item${remaining === 1 ? "" : "s"} above to continue.`;
+  } else if (serialSupported && !serialGate.checked) {
+    msg = "G-code download is ready. Confirm the last item to enable USB Serial as well.";
+  }
+  $("gate-msg").textContent = msg;
+}
+[...commonGates, serialGate].forEach((c) => c.addEventListener("change", updateGate));
+
+/** Reveal the put-it-back reminder. The settings turned off above stay off. */
+function showRestore(afterRun) {
+  $("restore-title").textContent = afterRun
+    ? "Before your next print, put these back"
+    : "After you have run the file, put these back";
+  $("restore-serial").hidden = !afterRun;
+  $("restore").hidden = false;
+  if (afterRun) $("restore").scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
 $("download").addEventListener("click", () => {
   const s = settings();
   const blob = new Blob([generateGcode(s.tool, s.flush, s.pull)], { type: "text/plain" });
@@ -319,7 +388,8 @@ $("download").addEventListener("click", () => {
   a.download = `cold_pull_nozzle${s.nozzle}.gcode`;
   a.click();
   URL.revokeObjectURL(a.href);
-  say(`Saved cold_pull_nozzle${s.nozzle}.gcode — copy it to a USB drive and start it on the printer.`, "good");
+  say(`Saved cold_pull_nozzle${s.nozzle}.gcode. Copy it to a USB drive and start it on the printer.`, "good");
+  showRestore(false);
 });
 
 /* ============================================================
@@ -346,11 +416,16 @@ if (!serialSupported) $("run").disabled = true;
 function setRunning(on) {
   running = on;
   $("run").hidden = on;
-  $("download").disabled = on;
   $("cancel").hidden = !on;
   $("force").hidden = !on;
-  $("serial-prereq").hidden = !on && !serialSupported ? true : false;
+  // Re-apply the gate rather than setting button state directly, so the
+  // prerequisites keep governing the buttons after a run ends.
+  $("download").disabled = on;
+  updateGate();
+  if (on) $("download").disabled = true;
 }
+// Without Web Serial the serial prerequisite is unreachable, so hide it rather
+// than leave an unsatisfiable checkbox on screen.
 $("serial-prereq").hidden = !serialSupported;
 
 $("cancel").addEventListener("click", () => { abort = true; say("Cancel requested — stopping at the next step and restoring state.", "err"); });
@@ -546,7 +621,14 @@ $("run").addEventListener("click", async () => {
         break;
       }
     }
-    if (!abort) say("Cold pull complete. Inspect the tip: three thin strands with debris is a good pull.", "good");
+    if (!abort) {
+      say("Cold pull complete. Inspect the tip: three thin strands with debris is a good pull.", "good");
+      showRestore(true);
+    } else {
+      // Cancelled or force-stopped: the session settings were still changed on
+      // the printer, so the reminder is if anything more important here.
+      showRestore(true);
+    }
   } catch (e) {
     say(`Error: ${e.message}`, "err");
   } finally {
@@ -554,6 +636,11 @@ $("run").addEventListener("click", async () => {
     setRunning(false);
   }
 });
+
+// Apply the gate once at startup. Deliberately last: updateGate() reads
+// serialSupported, which is declared partway down this script and would be in
+// the temporal dead zone if this ran any earlier.
+updateGate();
 </script>
 </body>
 </html>
