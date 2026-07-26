@@ -577,11 +577,18 @@ $("run").addEventListener("click", async () => {
   logEl.innerHTML = "";
   const s = settings();
   let printer = null;
+  // Set as soon as a session exists, not when the procedure completes. By this
+  // point the user has already switched the filament sensor and auto retract
+  // off on the printer to satisfy the gate, so they need the restore reminder
+  // on EVERY exit from here on -- including a model-gate rejection where
+  // nothing was sent, and including exceptions that never reach the step loop.
+  let started = false;
 
   try {
     const port = await navigator.serial.requestPort();
     await port.open({ baudRate: 115200 });
     printer = new Printer(port);
+    started = true;
     setRunning(true);
 
     // --- Model gate. This sequence sends toolchanger picks, high nozzle
@@ -621,19 +628,20 @@ $("run").addEventListener("click", async () => {
         break;
       }
     }
-    if (!abort) {
-      say("Cold pull complete. Inspect the tip: three thin strands with debris is a good pull.", "good");
-      showRestore(true);
-    } else {
-      // Cancelled or force-stopped: the session settings were still changed on
-      // the printer, so the reminder is if anything more important here.
-      showRestore(true);
-    }
+    if (!abort) say("Cold pull complete. Inspect the tip: three thin strands with debris is a good pull.", "good");
   } catch (e) {
     say(`Error: ${e.message}`, "err");
   } finally {
     if (printer) await printer.close();
     setRunning(false);
+    // Reveal the reminder from here rather than at the end of the happy path.
+    // Once the procedure has begun, the printer has had M302 S0 / M591 S0
+    // applied and the user has already switched their menu settings off, so
+    // every exit needs the reminder -- including the ones that skip the loop
+    // entirely: a disconnect while awaiting printer.write() outside the inner
+    // try, or a rejected M112 write, both jump straight to the catch above.
+    // Those are the most hazardous exits, not the least.
+    if (started) showRestore(true);
   }
 });
 
