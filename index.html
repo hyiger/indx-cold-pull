@@ -1,0 +1,528 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>INDX Cold Pull</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #fbfbfa;
+    --fg: #1a1a19;
+    --muted: #6b6b68;
+    --line: #e3e3e0;
+    --card: #ffffff;
+    --accent: #b8562f;
+    --warn-bg: #fdf6ec;
+    --warn-line: #e8c9a0;
+    --ok: #2f7d4f;
+    --bad: #b3261e;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #191917; --fg: #eeeeec; --muted: #9a9a95; --line: #33332f;
+      --card: #212120; --accent: #e08256; --warn-bg: #2a2317; --warn-line: #5a4a2c;
+      --ok: #6cc48d; --bad: #f2837b;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 2rem 1.25rem 4rem;
+    background: var(--bg); color: var(--fg);
+    font: 16px/1.6 ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  main { max-width: 47rem; margin: 0 auto; }
+  h1 { font-size: 1.75rem; line-height: 1.2; margin: 0 0 .35rem; letter-spacing: -.02em; }
+  h2 { font-size: 1.05rem; margin: 2.25rem 0 .75rem; letter-spacing: -.01em; }
+  .sub { color: var(--muted); margin: 0 0 2rem; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 1.1rem 1.25rem; }
+  .warn { background: var(--warn-bg); border-color: var(--warn-line); }
+  ul.checks { list-style: none; margin: 0; padding: 0; }
+  ul.checks li { padding: .5rem 0; border-bottom: 1px solid var(--line); }
+  ul.checks li:last-child { border-bottom: 0; }
+  ul.checks b { font-weight: 600; }
+  ul.checks span { display: block; color: var(--muted); font-size: .875rem; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); gap: 1rem; }
+  label { display: block; font-size: .8rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-bottom: .3rem; }
+  select, input {
+    width: 100%; padding: .55rem .6rem; font: inherit;
+    background: var(--bg); color: var(--fg);
+    border: 1px solid var(--line); border-radius: 7px;
+  }
+  .actions { display: flex; flex-wrap: wrap; gap: .6rem; margin-top: 1.25rem; }
+  button {
+    font: inherit; font-weight: 500; padding: .6rem 1.1rem; border-radius: 7px;
+    border: 1px solid var(--accent); background: var(--accent); color: #fff; cursor: pointer;
+  }
+  button.ghost { background: transparent; color: var(--fg); border-color: var(--line); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  #log {
+    font-family: var(--mono); font-size: .8rem; line-height: 1.5;
+    background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+    padding: .8rem; max-height: 17rem; overflow: auto; white-space: pre-wrap; margin-top: 1rem;
+  }
+  #log:empty { display: none; }
+  .stage { font-weight: 600; }
+  .err { color: var(--bad); }
+  .good { color: var(--ok); }
+  code { font-family: var(--mono); font-size: .875em; background: var(--card); border: 1px solid var(--line); border-radius: 4px; padding: .05em .35em; }
+  footer { margin-top: 3rem; padding-top: 1.25rem; border-top: 1px solid var(--line); color: var(--muted); font-size: .875rem; }
+  a { color: var(--accent); }
+  .note { color: var(--muted); font-size: .875rem; }
+  table { width: 100%; border-collapse: collapse; font-size: .9rem; }
+  td { padding: .35rem .5rem .35rem 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+  td:first-child { white-space: nowrap; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <h1>INDX Cold Pull</h1>
+  <p class="sub">
+    Generates a guided cold-pull procedure for the Prusa CORE One INDX, to clear a
+    partially clogged nozzle. Prusa's built-in wizard (<code>M1702</code>) is not enabled
+    for INDX, so there is no in-firmware equivalent.
+  </p>
+
+  <div class="card warn">
+    <strong>Do these at the printer first.</strong>
+    <p class="note" style="margin:.4rem 0 .8rem">
+      None can be set or read over G-code — they are menu-only settings, so nothing here
+      can check them for you. Each fails <em>silently</em> rather than loudly.
+    </p>
+    <ul class="checks">
+      <li><b>Filament Sensor → OFF</b>
+        <span>Otherwise the printer grabs and autoloads the filament while you are inserting it by hand.</span></li>
+      <li><b>Auto Retract → OFF</b>
+        <span>Otherwise the printer can treat the filament as retracted and discard the extrusion and pull moves — the procedure appears to run while nothing happens.</span></li>
+      <li><b>Remove the PTFE tube from this tool</b>
+        <span>The pulled plug travels up and out of the top port. With the tube fitted there is nowhere for it to go.</span></li>
+      <li><b>Light-coloured PLA on hand, and stay at the printer</b>
+        <span>PLA shows the extracted debris clearly. The procedure waits for knob presses at five points, and the heaters switch off after ~30 minutes unattended.</span></li>
+      <li id="serial-prereq" hidden><b>Serial mode only: “Serial Printing Screen” → OFF, then reboot</b>
+        <span>Settings → Hardware → Experimental Settings. Left on, a 5-second inactivity timeout runs the end-of-print sequence mid-procedure, docking the tool while commands are still being sent. This crashes the printer with <code>E move without tool</code>.</span></li>
+    </ul>
+  </div>
+
+  <h2>Settings</h2>
+  <div class="grid">
+    <div>
+      <label for="nozzle">Nozzle</label>
+      <select id="nozzle">
+        <option value="1" selected>1</option><option value="2">2</option>
+        <option value="3">3</option><option value="4">4</option>
+        <option value="5">5</option><option value="6">6</option>
+        <option value="7">7</option><option value="8">8</option>
+      </select>
+    </div>
+    <div>
+      <label for="flush">Flush temp (°C)</label>
+      <input id="flush" type="number" min="200" max="290" step="5" value="290">
+    </div>
+    <div>
+      <label for="pull">Pull temp (°C)</label>
+      <input id="pull" type="number" min="60" max="120" step="5" value="80">
+    </div>
+  </div>
+  <p class="note" style="margin:.75rem 0 0">
+    80 °C is the field-verified pull temperature; raise in 5–10 °C steps only if the plug
+    will not release. Flush is capped at 290 because the firmware clamps settable targets
+    there. These are INDX-frame values — its sensor sits 17 mm above the tip and reads
+    high, so do not substitute numbers from MK4 or XL guides.
+  </p>
+
+  <div class="actions">
+    <button id="download">Download G-code</button>
+    <button id="run" class="ghost">Run over USB…</button>
+    <button id="cancel" class="ghost" hidden>Cancel</button>
+    <button id="force" class="ghost" hidden>Force stop</button>
+  </div>
+  <p class="note" id="serial-note" style="margin:.7rem 0 0"></p>
+
+  <div id="log" aria-live="polite"></div>
+
+  <h2>What it does</h2>
+  <table>
+    <tr><td>Pick tool</td><td>Heating requires a latched tool, so the pick must come first.</td></tr>
+    <tr><td>Flush</td><td>~60 mm of PLA at the flush temperature to displace old material.</td></tr>
+    <tr><td>Pack</td><td>Small extrusions while cooling toward 180 °C, so the plug casts the nozzle interior.</td></tr>
+    <tr><td>Deep cool</td><td>Fan-assisted to 60 °C with a fixed dwell, so the plug grips the debris.</td></tr>
+    <tr><td>Pull</td><td>Reheat to the pull temperature, raise motor current, retract hard.</td></tr>
+    <tr><td>Restore</td><td>Undo every session change: motor current, extrusion guard, stall detection.</td></tr>
+  </table>
+  <p class="note" style="margin-top:.8rem">
+    Prompts appear on the <strong>printer's</strong> screen and wait for a knob press.
+    Success looks like three thin strands with visible dark debris; repeat until the tip
+    comes out clean, then re-enable the sensor and auto retract and refit the PTFE tube.
+  </p>
+
+  <footer>
+    Verified against Prusa-Firmware-Buddy <code>6.6.3+15625</code>.
+    Use at your own risk — this drives a hot nozzle and a high-current motor.
+    <br>
+    <a href="https://github.com/hyiger/indx-cold-pull">Source</a> ·
+    <a href="https://github.com/hyiger/PrusaSlicer/blob/master/doc/Cold_Pull_Guide.md">Full guide</a> ·
+    <a href="https://github.com/prusa3d/Prusa-Firmware-Buddy/issues/5399">Related firmware bug</a>
+  </footer>
+</main>
+
+<script>
+"use strict";
+
+/* ============================================================
+   G-code generation.
+   Ported from generate_cold_pull_gcode() in the PrusaSlicer fork
+   (src/slic3r/Utils/MaintenanceSerial.cpp) and kept byte-identical
+   to it. If you change the procedure, change it in both places.
+
+   Constraints that shaped this, all verified against firmware:
+     - M0 messages: whole line <= 95 chars (MAX_CMD_SIZE 96), first
+       token a plain word, no semicolons, or the firmware crops the
+       message mid-sentence.
+     - T<n> must precede any M109: an unlatched tool never becomes
+       thermally managed and the heater will not arm.
+     - M302 S0 is required or EXTRUDE_MINTEMP (170) silently strips
+       the pull moves.
+     - Prompts are unbounded; past the ~30 min safety timer the heater
+       target is cleared, so temperature is re-asserted after each one.
+   ============================================================ */
+function generateGcode(tool /* 0-based */, flush, pull) {
+  const nozzle = tool + 1;
+  let g = "";
+
+  g += "; ============================================================\n";
+  g += "; INDX cold pull - guided, with on-screen prompts\n";
+  g += `; Generated by PrusaSlicer. Nozzle ${nozzle}, flush ${flush}C, pull ${pull}C\n`;
+  g += "; ------------------------------------------------------------\n";
+  g += "; BEFORE RUNNING, at the printer:\n";
+  g += ";   - Settings: turn the Filament Sensor OFF\n";
+  g += ";   - Settings: turn Auto Retract OFF\n";
+  g += ";   - Remove the PTFE tube from this tool\n";
+  g += ";   - Have light-colored PLA ready and stay at the printer\n";
+  g += "; ------------------------------------------------------------\n";
+  g += "; The procedure stops at several prompts and waits for a knob\n";
+  g += "; press. To bail out, press the knob then Stop the print.\n";
+  g += "; If you Stop at the tip check, the restore block never runs -\n";
+  g += "; afterwards send M302 S170 and M591 R, or power-cycle, to put\n";
+  g += "; back the cold-extrusion guard and stuck-filament detection.\n";
+  g += "; A prompt left ~30 min turns the heaters off (safety timer); the\n";
+  g += "; procedure re-asserts temperature after each prompt to cover that.\n";
+  g += "; ------------------------------------------------------------\n";
+  g += "; PRINTER MODEL CHECK: the M862.3 line below makes the printer\n";
+  g += "; refuse this file unless it is a CORE One INDX. The sequence sends\n";
+  g += "; toolchanger picks, high nozzle temperatures and INDX motor\n";
+  g += "; currents, which are wrong and potentially damaging on an MK4, XL\n";
+  g += "; or MINI. Do not delete the line.\n";
+  g += "; ============================================================\n\n";
+
+  g += "M862.3 P\"COREONEINDX\"   ; refuse to run on a non-INDX printer\n\n";
+
+  g += "M117 Cold pull - guided\n";
+  g += "M0 Setup check: filament sensor OFF, auto retract OFF, PTFE tube removed. Press to continue\n\n";
+
+  g += `M117 Picking nozzle ${nozzle}\n`;
+  g += `T${tool} M0                 ; M0 param = ignore tool mapping\n`;
+  g += "M302 S0               ; allow cold extrusion for the session\n";
+  g += "M83                   ; relative E\n";
+  g += "M591 S0               ; disable stuck-filament detection\n\n";
+
+  g += "M0 Insert light PLA into the top port until it stops at the drive gears. Do not force it\n\n";
+
+  g += `M117 Heating to ${flush}\n`;
+  g += `M109 S${flush}\n\n`;
+
+  g += "M117 Purging - watch the tip\n";
+  for (let i = 0; i < 3; i++) {
+    g += "G1 E20 F120\n";
+    if (i < 2) g += "G4 S2\n";
+  }
+  g += "\n";
+
+  g += "M0 Tip check. PLA out: press knob. NOTHING out: press knob, Stop print, power cycle\n";
+  g += "G4 S15                ; grace window to reach Stop before packing starts\n";
+  g += "; If nothing extruded, the blockage is above the melt zone and a\n";
+  g += "; cold pull cannot reach it. Power-cycling after the Stop restores the\n";
+  g += "; cold-extrusion guard and stuck-filament detection that this file\n";
+  g += "; disabled; the restore block at the end never runs in that case.\n\n";
+
+  g += "M117 Cooling - packing\n";
+  g += `M109 S${flush}             ; prompts are unbounded - the safety timer may have\n`;
+  g += "                      ; cleared the target, so re-assert before packing\n";
+  g += "M104 S180             ; fall toward 180, packing pushes on the way\n";
+  for (let i = 0; i < 8; i++) {
+    g += "G1 E2 F60\n";
+    if (i < 7) g += "G4 S5\n";
+  }
+  g += "\n";
+
+  g += "M117 Deep cooling to 60\n";
+  g += "M104 S0\n";
+  g += "M106 S255             ; fan full\n";
+  g += "M109 R60              ; regulates AT 60; may exit early on slope-break\n";
+  g += "M104 S0               ; heater truly off\n";
+  g += "G4 S120               ; dwell covers an early exit above 60\n";
+  g += "M107\n\n";
+
+  g += `M117 Reheating to ${pull}\n`;
+  g += `M104 S${pull}\n`;
+  g += `M109 R${pull}\n\n`;
+
+  g += `M0 Pull ready at ${pull}C. Motor will yank the plug - keep hands clear. Press to pull\n\n`;
+
+  g += "M117 PULLING\n";
+  g += `M104 S${pull}              ; re-assert: yanking at high current against a\n`;
+  g += `M109 R${pull}              ; room-temperature plug can snap it or strain the drive\n`;
+  g += "M906 E650             ; E current up for the stiff plug\n";
+  g += "G1 E-40 F3000         ; 50mm/s yank\n";
+  g += "G1 E-30 F1200         ; feed the strand up out of the gear\n";
+  g += "M906 E550             ; restore INDX default current\n";
+  g += "M591 R                ; restore stuck-filament detection\n";
+  g += "M302 S170             ; restore cold-extrusion guard\n";
+  g += "M104 S0\n\n";
+
+  g += "M0 Pull done. Remove strand from top port. Pressing knob starts auto wipe and dock\n\n";
+
+  g += "M117 Finishing - hands off\n";
+  g += "; The end-of-print sequence runs automatically after the last line:\n";
+  g += "; nozzle wipe, tool dock, steppers off. Wait for Finished.\n";
+  g += "; Inspect the tip: three thin strands + debris = a good pull.\n";
+  g += "; Repeat until the tip comes out clean, then re-enable the\n";
+  g += "; Filament Sensor and Auto Retract and refit the PTFE tube.\n";
+
+  return g;
+}
+
+/* ---------- UI plumbing ---------- */
+const $ = (id) => document.getElementById(id);
+const logEl = $("log");
+
+function say(text, cls) {
+  const line = document.createElement("div");
+  if (cls) line.className = cls;
+  line.textContent = text;
+  logEl.appendChild(line);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+function settings() {
+  const nozzle = parseInt($("nozzle").value, 10);
+  const flush = Math.min(290, Math.max(200, parseInt($("flush").value, 10) || 290));
+  const pull = Math.min(120, Math.max(60, parseInt($("pull").value, 10) || 80));
+  return { tool: nozzle - 1, nozzle, flush, pull };
+}
+
+$("download").addEventListener("click", () => {
+  const s = settings();
+  const blob = new Blob([generateGcode(s.tool, s.flush, s.pull)], { type: "text/plain" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `cold_pull_nozzle${s.nozzle}.gcode`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+  say(`Saved cold_pull_nozzle${s.nozzle}.gcode — copy it to a USB drive and start it on the printer.`, "good");
+});
+
+/* ============================================================
+   Serial mode (Web Serial: Chrome/Edge desktop).
+
+   Mirrors the guarded serial path from the PrusaSlicer fork:
+     - identify the printer with M115 and refuse anything but an INDX
+     - arm the serial-print state machine with an instant G4 P1 so a
+       long-blocking M109 cannot trip the 5s inactivity timeout that
+       runs the end-of-print teardown mid-procedure
+     - re-assert T<n> before each block of E moves
+     - re-assert temperature after each user-paced prompt
+     - on ANY failure, attempt cleanup and report honestly whether the
+       printer confirmed it
+   ============================================================ */
+const serialSupported = "serial" in navigator;
+let abort = false, forceStop = false, running = false;
+
+$("serial-note").textContent = serialSupported
+  ? "Serial mode drives the printer directly and shows progress here. It additionally requires “Serial Printing Screen” turned off."
+  : "Serial mode needs the Web Serial API (Chrome or Edge on desktop). Use the G-code download instead — it runs the identical procedure.";
+if (!serialSupported) $("run").disabled = true;
+
+function setRunning(on) {
+  running = on;
+  $("run").hidden = on;
+  $("download").disabled = on;
+  $("cancel").hidden = !on;
+  $("force").hidden = !on;
+  $("serial-prereq").hidden = !on && !serialSupported ? true : false;
+}
+$("serial-prereq").hidden = !serialSupported;
+
+$("cancel").addEventListener("click", () => { abort = true; say("Cancel requested — stopping at the next step and restoring state.", "err"); });
+$("force").addEventListener("click", () => { abort = true; forceStop = true; say("FORCE STOP requested — sending M112.", "err"); });
+
+class Printer {
+  constructor(port) {
+    this.port = port;
+    this.reader = port.readable.getReader();
+    this.writer = port.writable.getWriter();
+    this.enc = new TextEncoder();
+    this.dec = new TextDecoder();
+    this.buf = "";
+  }
+  async write(cmd) { await this.writer.write(this.enc.encode(cmd + "\n")); }
+  /** Read until a bare "ok". Returns collected lines. Throws on timeout/cancel. */
+  async untilOk(timeoutMs, { collect = false, honorForceStop = false } = {}) {
+    const lines = [];
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      if (forceStop && honorForceStop) throw new Error("force-stop");
+      if (Date.now() > deadline) throw new Error("timed out waiting for the printer");
+      const { value, done } = await this.reader.read();
+      if (done) throw new Error("serial port closed");
+      this.buf += this.dec.decode(value, { stream: true });
+      let nl;
+      while ((nl = this.buf.indexOf("\n")) >= 0) {
+        const line = this.buf.slice(0, nl).replace(/\r$/, "").trim();
+        this.buf = this.buf.slice(nl + 1);
+        if (line === "ok") return lines;
+        if (line && collect) lines.push(line);
+      }
+    }
+  }
+  async close() {
+    try { this.reader.releaseLock(); this.writer.releaseLock(); await this.port.close(); } catch (_) {}
+  }
+}
+
+/** Steps: [caption, command, timeoutMs]. Mirrors the fork's step table. */
+function buildSteps(tool, flush, pull) {
+  const T = `T${tool} M0`;
+  const QUICK = 10e3, MOVE = 60e3, PICK = 240e3, HEAT = 900e3, COOL = 2400e3, PROMPT = 7200e3;
+  const s = [];
+  s.push(["Confirm the setup prompt on the printer",
+    "M0 Setup check: filament sensor OFF, auto retract OFF, PTFE tube removed. Press to continue", PROMPT]);
+  // Arm with an instant G-command; see the note above.
+  s.push(["Starting session", "G4 P1", QUICK]);
+  s.push(["Picking nozzle from its dock", T, PICK]);
+  s.push(["Allowing cold extrusion", "M302 S0", QUICK]);
+  s.push(["Switching to relative extrusion", "M83", QUICK]);
+  s.push(["Disabling stuck-filament detection", "M591 S0", QUICK]);
+  s.push(["Insert filament at the printer, then press the knob",
+    "M0 Insert light PLA into the top port until it stops at the drive gears. Do not force it", PROMPT]);
+  s.push(["Heating nozzle to flush temperature", `M109 S${flush}`, HEAT]);
+  s.push(["Confirming nozzle is picked", T, PICK]);
+  for (let i = 0; i < 3; i++) {
+    s.push([`Pushing filament through (${i + 1} of 3)`, "G1 E20 F120", MOVE]);
+    if (i < 2) s.push(["Letting pressure settle", "G4 S2", MOVE]);
+  }
+  s.push(["Check the tip, then answer the prompt on the printer",
+    "M0 Tip check. PLA out: press knob to continue. NOTHING out: press knob then cancel here", PROMPT]);
+  s.push(["Confirming nozzle is still at temperature", `M109 S${flush}`, HEAT]);
+  s.push(["Cooling toward 180 C while packing", "M104 S180", QUICK]);
+  s.push(["Confirming nozzle is picked", T, PICK]);
+  for (let i = 0; i < 8; i++) {
+    s.push([`Packing the melt zone (${i + 1} of 8)`, "G1 E2 F60", MOVE]);
+    if (i < 7) s.push(["Cooling 5 seconds", "G4 S5", MOVE]);
+  }
+  s.push(["Turning the heater off", "M104 S0", QUICK]);
+  s.push(["Fan to full", "M106 S255", QUICK]);
+  s.push(["Cooling to 60 C", "M109 R60", COOL]);
+  s.push(["Turning the heater off", "M104 S0", QUICK]);
+  s.push(["Holding 2 minutes to finish cooling", "G4 S120", 180e3]);
+  s.push(["Fan off", "M107", QUICK]);
+  s.push(["Setting pull temperature", `M104 S${pull}`, QUICK]);
+  s.push(["Warming to pull temperature", `M109 R${pull}`, HEAT]);
+  s.push(["Keep hands clear, then press the knob to pull",
+    `M0 Pull ready at ${pull}C. Motor will yank the plug - keep hands clear. Press to pull`, PROMPT]);
+  s.push(["Restoring pull temperature", `M104 S${pull}`, QUICK]);
+  s.push(["Confirming pull temperature", `M109 R${pull}`, HEAT]);
+  s.push(["Confirming nozzle is picked", T, PICK]);
+  s.push(["Raising extruder motor current", "M906 E650", QUICK]);
+  s.push(["Pulling the plug out", "G1 E-40 F3000", MOVE]);
+  s.push(["Feeding the strand up and out", "G1 E-30 F1200", MOVE]);
+  s.push(["Restoring motor current", "M906 E550", QUICK]);
+  s.push(["Restoring stuck-filament detection", "M591 R", QUICK]);
+  s.push(["Restoring cold-extrusion guard", "M302 S170", QUICK]);
+  s.push(["Turning the heater off", "M104 S0", QUICK]);
+  s.push(["Remove the strand at the printer, then press the knob",
+    "M0 Done. Remove the strand and inspect the tip. Park the tool via Control menu when ready", PROMPT]);
+  s.push(["Releasing the motors", "M84", QUICK]);
+  return s;
+}
+
+async function cleanup(printer) {
+  say("Restoring printer state…", "stage");
+  const cmds = ["M104 S0", "M107", "M302 S170", "M591 R", "M906 E550", "M84"];
+  let allConfirmed = true;
+  for (const c of cmds) {
+    // Force stop must work from here: cleanup can block behind an M0 prompt,
+    // which is exactly when someone reaches for the emergency stop.
+    if (forceStop) { try { await printer.write("M112"); say("M112 sent.", "err"); } catch (_) {} return false; }
+    try {
+      await printer.write(c);
+      await printer.untilOk(5000, { honorForceStop: true });
+    } catch (e) {
+      if (forceStop) { try { await printer.write("M112"); say("M112 sent.", "err"); } catch (_) {} return false; }
+      allConfirmed = false;
+    }
+  }
+  return allConfirmed;
+}
+
+$("run").addEventListener("click", async () => {
+  if (running) return;
+  abort = false; forceStop = false;
+  logEl.innerHTML = "";
+  const s = settings();
+  let printer = null;
+
+  try {
+    const port = await navigator.serial.requestPort();
+    await port.open({ baudRate: 115200 });
+    printer = new Printer(port);
+    setRunning(true);
+
+    // --- Model gate. This sequence sends toolchanger picks, high nozzle
+    // temperatures and INDX motor currents; on an MK4/XL/MINI those are wrong
+    // and potentially damaging. Refuse anything that is not an INDX.
+    say("Identifying printer…", "stage");
+    await printer.write("M115");
+    const info = await printer.untilOk(10000, { collect: true });
+    const m = info.join(" ").match(/MACHINE_TYPE:(\S+)/);
+    const model = m ? m[1] : "";
+    if (!/INDX/i.test(model)) {
+      say(`Refusing to continue: this port reports "${model || "an unknown model"}", not an INDX.`, "err");
+      say("Nothing was sent. Pick the INDX's port, or use the G-code download.", "err");
+      await printer.close(); setRunning(false); return;
+    }
+    say(`Confirmed ${model}.`, "good");
+
+    const steps = buildSteps(s.tool, s.flush, s.pull);
+    for (const [caption, cmd, timeout] of steps) {
+      if (abort) {
+        if (forceStop) { await printer.write("M112"); say("M112 sent. Reset the printer before continuing.", "err"); break; }
+        const ok = await cleanup(printer);
+        say(ok ? "Cancelled. Printer state restored."
+               : "Cancelled, but the printer did not confirm cleanup — CHECK IT DIRECTLY. The nozzle may still be hot.", ok ? "good" : "err");
+        break;
+      }
+      say(caption, "stage");
+      await printer.write(cmd);
+      try {
+        await printer.untilOk(timeout, { honorForceStop: true });
+      } catch (e) {
+        if (forceStop) { await printer.write("M112"); say("M112 sent. Reset the printer before continuing.", "err"); break; }
+        say(`Failed: ${e.message}`, "err");
+        const ok = await cleanup(printer);
+        say(ok ? "Printer state restored."
+               : "The printer did not confirm cleanup — CHECK IT DIRECTLY. The nozzle may still be hot, and the extrusion guard may still be disabled.", ok ? "good" : "err");
+        break;
+      }
+    }
+    if (!abort) say("Cold pull complete. Inspect the tip: three thin strands with debris is a good pull.", "good");
+  } catch (e) {
+    say(`Error: ${e.message}`, "err");
+  } finally {
+    if (printer) await printer.close();
+    setRunning(false);
+  }
+});
+</script>
+</body>
+</html>
