@@ -99,7 +99,7 @@
         <span>The pulled plug travels up and out of the top port. With the tube fitted there is nowhere for it to go.</span></li>
       <li><b>Light-coloured PLA on hand, and stay at the printer</b>
         <span>PLA shows the extracted debris clearly. The procedure waits for knob presses at five points, and the heaters switch off after ~30 minutes unattended.</span></li>
-      <li id="serial-prereq" hidden><b>Serial mode only: “Serial Printing Screen” → OFF, then reboot</b>
+      <li id="serial-prereq" hidden><b>USB Serial only: “Serial Printing Screen” → OFF, then reboot</b>
         <span>Settings → Hardware → Experimental Settings. Left on, a 5-second inactivity timeout runs the end-of-print sequence mid-procedure, docking the tool while commands are still being sent. This crashes the printer with <code>E move without tool</code>.</span></li>
     </ul>
   </div>
@@ -133,7 +133,7 @@
 
   <div class="actions">
     <button id="download">Download G-code</button>
-    <button id="run" class="ghost">Run over USB…</button>
+    <button id="run" class="ghost">Run over USB Serial</button>
     <button id="cancel" class="ghost" hidden>Cancel</button>
     <button id="force" class="ghost" hidden>Force stop</button>
   </div>
@@ -339,8 +339,8 @@ const serialSupported = "serial" in navigator;
 let abort = false, forceStop = false, running = false;
 
 $("serial-note").textContent = serialSupported
-  ? "Serial mode drives the printer directly and shows progress here. It additionally requires “Serial Printing Screen” turned off."
-  : "Serial mode needs the Web Serial API (Chrome or Edge on desktop). Use the G-code download instead — it runs the identical procedure.";
+  ? "Running over USB Serial drives the printer directly from this page and shows progress here. It additionally requires “Serial Printing Screen” turned off on the printer."
+  : "Running over USB Serial needs the Web Serial API (Chrome or Edge on desktop). Use the G-code download instead — it runs the identical procedure.";
 if (!serialSupported) $("run").disabled = true;
 
 function setRunning(on) {
