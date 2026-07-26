@@ -364,16 +364,34 @@ class Printer {
     this.enc = new TextEncoder();
     this.dec = new TextDecoder();
     this.buf = "";
+    this.pending = null; // in-flight reader.read(), carried across time slices
   }
   async write(cmd) { await this.writer.write(this.enc.encode(cmd + "\n")); }
   /** Read until a bare "ok". Returns collected lines. Throws on timeout/cancel. */
   async untilOk(timeoutMs, { collect = false, honorForceStop = false } = {}) {
     const lines = [];
     const deadline = Date.now() + timeoutMs;
+    const SLICE = Symbol("slice");
     for (;;) {
       if (forceStop && honorForceStop) throw new Error("force-stop");
       if (Date.now() > deadline) throw new Error("timed out waiting for the printer");
-      const { value, done } = await this.reader.read();
+
+      // reader.read() blocks until bytes arrive, so awaiting it directly would
+      // make the checks above unreachable whenever the printer goes silent --
+      // an unplugged or crashed printer would hang here forever with the
+      // timeout never firing and force-stop ignored, which is exactly when the
+      // nozzle may still be hot. Race it against a short slice instead, and
+      // carry the SAME pending read across slices: a second read() cannot be
+      // issued while one is outstanding.
+      if (!this.pending) this.pending = this.reader.read();
+      let timer;
+      const slice = new Promise((r) => { timer = setTimeout(() => r(SLICE), 250); });
+      const res = await Promise.race([this.pending, slice]);
+      clearTimeout(timer);
+      if (res === SLICE) continue; // re-check deadline and force-stop
+      this.pending = null;
+
+      const { value, done } = res;
       if (done) throw new Error("serial port closed");
       this.buf += this.dec.decode(value, { stream: true });
       let nl;
