@@ -593,6 +593,12 @@ $("run").addEventListener("click", async () => {
   // user would walk away believing a still-clogged nozzle was cleared.
   let outcome = "completed";
 
+  // Nothing INDX-specific may be sent until M115 has positively identified the
+  // printer -- and that includes cleanup(), which issues M906 E550, an INDX
+  // motor-current value. Before the gate passes, the only command sent is M115
+  // itself, which changes no state, so there is nothing to clean up anyway.
+  let confirmedIndx = false;
+
   try {
     const port = await navigator.serial.requestPort();
     await port.open({ baudRate: 115200 });
@@ -613,6 +619,7 @@ $("run").addEventListener("click", async () => {
       outcome = "rejected";
       await printer.close(); setRunning(false); return;
     }
+    confirmedIndx = true;
     say(`Confirmed ${model}.`, "good");
 
     const steps = buildSteps(s.tool, s.flush, s.pull);
@@ -654,9 +661,13 @@ $("run").addEventListener("click", async () => {
     outcome = "failed";
     say(`Error: ${e.message}`, "err");
     // Reached when something threw outside the step loop, e.g. the M115 probe
-    // or a write during the model gate. If a session exists the printer may
-    // already have session settings applied, so attempt the same cleanup.
-    if (printer) {
+    // or a write during the model gate. Only clean up once the printer has been
+    // positively identified as an INDX: cleanup() sends M906 E550, an
+    // INDX-specific motor current, and running it after a failed or timed-out
+    // probe would push that at exactly the MK4/XL/MINI the model gate exists to
+    // protect. Before the gate passes only M115 has been sent, which changes
+    // nothing, so there is nothing to restore.
+    if (printer && confirmedIndx) {
       const ok = await cleanup(printer);
       say(ok ? "Printer state restored."
              : "The printer did not confirm cleanup — CHECK IT DIRECTLY. The nozzle may still be hot.", ok ? "good" : "err");
