@@ -577,18 +577,26 @@ $("run").addEventListener("click", async () => {
   logEl.innerHTML = "";
   const s = settings();
   let printer = null;
-  // Set as soon as a session exists, not when the procedure completes. By this
-  // point the user has already switched the filament sensor and auto retract
-  // off on the printer to satisfy the gate, so they need the restore reminder
-  // on EVERY exit from here on -- including a model-gate rejection where
-  // nothing was sent, and including exceptions that never reach the step loop.
-  let started = false;
+
+  // The button only became clickable after the user confirmed, on the printer,
+  // that the filament sensor and auto retract are off and the PTFE tube is out.
+  // Those settings are already changed by the time we get here, so the restore
+  // reminder is owed on EVERY exit -- including the early ones where nothing
+  // was ever sent, such as dismissing Chrome's port chooser or a failed
+  // port.open(). Hence: set before the attempt, not after a session exists.
+  const started = true;
+
+  // "Cold pull complete" must describe what actually happened. The loop breaks
+  // out on failure and on cancel, and neither sets abort in every case, so
+  // success is tracked explicitly rather than inferred from the absence of a
+  // flag. A run that timed out before the pull must never report success: the
+  // user would walk away believing a still-clogged nozzle was cleared.
+  let outcome = "completed";
 
   try {
     const port = await navigator.serial.requestPort();
     await port.open({ baudRate: 115200 });
     printer = new Printer(port);
-    started = true;
     setRunning(true);
 
     // --- Model gate. This sequence sends toolchanger picks, high nozzle
@@ -602,6 +610,7 @@ $("run").addEventListener("click", async () => {
     if (!/INDX/i.test(model)) {
       say(`Refusing to continue: this port reports "${model || "an unknown model"}", not an INDX.`, "err");
       say("Nothing was sent. Pick the INDX's port, or use the G-code download.", "err");
+      outcome = "rejected";
       await printer.close(); setRunning(false); return;
     }
     say(`Confirmed ${model}.`, "good");
@@ -609,6 +618,7 @@ $("run").addEventListener("click", async () => {
     const steps = buildSteps(s.tool, s.flush, s.pull);
     for (const [caption, cmd, timeout] of steps) {
       if (abort) {
+        outcome = forceStop ? "force-stopped" : "cancelled";
         if (forceStop) { await printer.write("M112"); say("M112 sent. Reset the printer before continuing.", "err"); break; }
         const ok = await cleanup(printer);
         say(ok ? "Cancelled. Printer state restored."
@@ -616,11 +626,20 @@ $("run").addEventListener("click", async () => {
         break;
       }
       say(caption, "stage");
-      await printer.write(cmd);
       try {
+        // The write belongs INSIDE the guard. A USB disconnect mid-procedure
+        // rejects here, and with the write outside, that exception skipped the
+        // cleanup below and surfaced as a bare error -- leaving the nozzle
+        // possibly hot with cold extrusion enabled and stall detection off.
+        await printer.write(cmd);
         await printer.untilOk(timeout, { honorForceStop: true });
       } catch (e) {
-        if (forceStop) { await printer.write("M112"); say("M112 sent. Reset the printer before continuing.", "err"); break; }
+        outcome = forceStop ? "force-stopped" : "failed";
+        if (forceStop) {
+          try { await printer.write("M112"); say("M112 sent. Reset the printer before continuing.", "err"); }
+          catch (_) { say("Force stop could NOT be sent — the connection is gone. CHECK THE PRINTER DIRECTLY, it may still be hot.", "err"); }
+          break;
+        }
         say(`Failed: ${e.message}`, "err");
         const ok = await cleanup(printer);
         say(ok ? "Printer state restored."
@@ -628,19 +647,27 @@ $("run").addEventListener("click", async () => {
         break;
       }
     }
-    if (!abort) say("Cold pull complete. Inspect the tip: three thin strands with debris is a good pull.", "good");
+    if (outcome === "completed") {
+      say("Cold pull complete. Inspect the tip: three thin strands with debris is a good pull.", "good");
+    }
   } catch (e) {
+    outcome = "failed";
     say(`Error: ${e.message}`, "err");
+    // Reached when something threw outside the step loop, e.g. the M115 probe
+    // or a write during the model gate. If a session exists the printer may
+    // already have session settings applied, so attempt the same cleanup.
+    if (printer) {
+      const ok = await cleanup(printer);
+      say(ok ? "Printer state restored."
+             : "The printer did not confirm cleanup — CHECK IT DIRECTLY. The nozzle may still be hot.", ok ? "good" : "err");
+    }
   } finally {
     if (printer) await printer.close();
     setRunning(false);
-    // Reveal the reminder from here rather than at the end of the happy path.
-    // Once the procedure has begun, the printer has had M302 S0 / M591 S0
-    // applied and the user has already switched their menu settings off, so
-    // every exit needs the reminder -- including the ones that skip the loop
-    // entirely: a disconnect while awaiting printer.write() outside the inner
-    // try, or a rejected M112 write, both jump straight to the catch above.
-    // Those are the most hazardous exits, not the least.
+    // Revealed from finally so it fires on every exit: completion, cancel,
+    // force stop, model rejection, an exception before the loop, and the early
+    // returns where nothing was ever sent. See the note on `started` above --
+    // the settings were already changed on the printer before this ran.
     if (started) showRestore(true);
   }
 });
