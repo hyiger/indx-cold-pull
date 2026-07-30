@@ -28,7 +28,7 @@ skimmed and the consequences here are not recoverable by reading further:
 | **Filament Sensor → OFF** | Otherwise the printer grabs and autoloads the filament while you are inserting it by hand. |
 | **Auto Retract → OFF** | Otherwise the printer can treat the filament as retracted and discard the extrusion and pull moves — the procedure appears to run while nothing happens. |
 | **Remove the PTFE tube from this tool** | The pulled plug travels up and out of the top port. With the tube fitted there is nowhere for it to go. |
-| **Light-coloured PLA, and stay at the printer** | PLA shows the debris clearly. The procedure waits for knob presses at five points, and the heaters switch off after ~30 minutes unattended. |
+| **Light-coloured PLA, and stay at the printer** | PLA shows the debris clearly. Do **not** load it beforehand — a prompt on the printer's screen says when to insert it. The procedure waits for knob presses at six points, and the heaters switch off after ~30 minutes unattended. |
 
 Serial mode additionally needs **Settings → Hardware → Experimental Settings →
 "Serial Printing Screen" → OFF** (then reboot). See [the firmware bug](#firmware-bug)
@@ -37,8 +37,18 @@ below for why.
 ## The procedure
 
 Pick tool → hot flush → pack while cooling → deep cool → motorized pull →
-restore. Prompts appear on the **printer's** screen and wait for a knob press,
-so your hands are at the machine where the work happens.
+restore → warm dock. Prompts appear on the **printer's** screen and wait
+for a knob press, so your hands are at the machine where the work happens.
+
+The six knob-press points, in order: confirm the setup, **insert the PLA**
+(this is when the filament goes in, not before), **start the purge** — from
+here, watch the nozzle tip for melted PLA flowing out — confirm what came out,
+start the pull, and remove the pulled strand. Everything between the prompts,
+including the tool pick and the final warm dock, is automatic. The nozzle is
+rewarmed before docking so residue releases instead of dragging cold strings.
+The closing brush wipe over the wastebin is end-of-print machinery, so **only
+the G-code-file route gets it**; a serial run warms the nozzle and docks
+without a wipe.
 
 Success looks like **three thin strands with visible dark debris**. Repeat until
 the tip comes out clean, typically one to three cycles.
@@ -96,13 +106,17 @@ and the normal print state machine, so this timeout never applies to it.
 ## Keeping the two in sync
 
 `generateGcode()` in `index.html` is a port of `generate_cold_pull_gcode()` in the
-PrusaSlicer fork (`src/slic3r/Utils/MaintenanceSerial.cpp`) and is kept
+PrusaSlicer fork (`src/slic3r/Utils/MaintenanceSerial.cpp`) and is normally kept
 **byte-identical** to it. If you change the procedure, change it in both places
 and re-check:
 
 ```bash
 diff <(node -e 'eval(require("fs").readFileSync("index.html","utf8").match(/<script>([\s\S]*?)<\/script>/)[1].match(/function generateGcode[\s\S]*?\n}/)[0]); process.stdout.write(generateGcode(0,290,80))') reference.gcode
 ```
+
+This check currently fails against a fork-generated `reference.gcode`: the
+issue #3 changes are ahead of the fork until they are ported back — see
+[Status](#status).
 
 ## Status
 
@@ -112,6 +126,13 @@ The serial path of this procedure has been run successfully on a CORE One INDX
 via the PrusaSlicer implementation. This page's own serial mode is a faithful
 port but has not itself been run end-to-end on hardware — treat a first run as a
 test.
+
+The changes from
+[issue #3](https://github.com/hyiger/indx-cold-pull/issues/3) — the pre-purge
+briefing prompt, the two-stage warm-up to the pull temperature, the warm wipe,
+and the automatic dock at the end of a serial run — are newer than that
+hardware run and have not yet been tested on a printer, nor ported back to the
+PrusaSlicer fork, so the two implementations are temporarily out of sync.
 
 **Use at your own risk.** This drives a hot nozzle and a high-current motor.
 

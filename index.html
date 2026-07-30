@@ -109,7 +109,7 @@
         The pulled plug travels up and out of the top port. With the tube fitted there is nowhere for it to go.</span></label></li>
       <li><label class="ck"><input type="checkbox" class="gate-common">
         <span><b>Light-coloured PLA on hand, and you will stay at the printer</b>
-        PLA shows the extracted debris clearly. The procedure waits for knob presses at five points, and the heaters switch off after ~30 minutes unattended.</span></label></li>
+        PLA shows the extracted debris clearly. Do not load it yet — a prompt on the printer's screen says when to insert it. The procedure waits for knob presses at six points, and the heaters switch off after ~30 minutes unattended.</span></label></li>
       <li id="serial-prereq"><label class="ck"><input type="checkbox" id="gate-serial">
         <span><b>USB Serial only: “Serial Printing Screen” → OFF, then reboot</b>
         Settings → Hardware → Experimental Settings. Left on, a 5-second inactivity timeout runs the end-of-print sequence mid-procedure, docking the tool while commands are still being sent. This crashes the printer with <code>E move without tool</code>. Not needed for the G-code download.</span></label></li>
@@ -145,6 +145,7 @@
 
   <div class="actions">
     <button id="download" disabled>Download G-code</button>
+    <button id="download-all" class="ghost" disabled>Download all 8 nozzles (.zip)</button>
     <button id="run" class="ghost" disabled>Run over USB Serial</button>
     <button id="cancel" class="ghost" hidden>Cancel</button>
     <button id="force" class="ghost" hidden>Force stop</button>
@@ -177,13 +178,17 @@
     <tr><td>Flush</td><td>~60 mm of PLA at the flush temperature to displace old material.</td></tr>
     <tr><td>Pack</td><td>Small extrusions while cooling toward 180 °C, so the plug casts the nozzle interior.</td></tr>
     <tr><td>Deep cool</td><td>Fan-assisted to 60 °C with a fixed dwell, so the plug grips the debris.</td></tr>
-    <tr><td>Pull</td><td>Reheat to the pull temperature, raise motor current, retract hard.</td></tr>
+    <tr><td>Pull</td><td>Reheat to the pull temperature in two stages to avoid overshoot, raise motor current, retract hard.</td></tr>
     <tr><td>Restore</td><td>Undo every session change: motor current, extrusion guard, stall detection.</td></tr>
+    <tr><td>Wipe &amp; dock</td><td>Rewarm the nozzle so residue releases instead of dragging cold strings, then dock automatically — no manual parking. The USB-file route also gets the firmware's end-of-print wastebin wipe, warm.</td></tr>
   </table>
   <p class="note" style="margin-top:.8rem">
-    Prompts appear on the <strong>printer's</strong> screen and wait for a knob press.
-    Success looks like three thin strands with visible dark debris; repeat until the tip
-    comes out clean, then re-enable the sensor and auto retract and refit the PTFE tube.
+    Prompts appear on the <strong>printer's</strong> screen and wait for a knob press —
+    six in all: confirm setup, <strong>insert the PLA</strong> (not before), start the
+    purge (from here, watch the nozzle tip for melted PLA flowing out), confirm what came
+    out, start the pull, remove the strand. Success looks like three thin strands with
+    visible dark debris; repeat until the tip comes out clean, then re-enable the sensor
+    and auto retract and refit the PTFE tube.
   </p>
 
   <footer>
@@ -202,8 +207,11 @@
 /* ============================================================
    G-code generation.
    Ported from generate_cold_pull_gcode() in the PrusaSlicer fork
-   (src/slic3r/Utils/MaintenanceSerial.cpp) and kept byte-identical
-   to it. If you change the procedure, change it in both places.
+   (src/slic3r/Utils/MaintenanceSerial.cpp), normally kept
+   byte-identical to it. If you change the procedure, change it in
+   both places. CURRENTLY AHEAD of the fork: the issue #3 changes
+   (purge briefing, two-stage warm-up, warm wipe, serial dock) are
+   not yet ported back -- see the README's Status section.
 
    Constraints that shaped this, all verified against firmware:
      - M0 messages: whole line <= 95 chars (MAX_CMD_SIZE 96), first
@@ -228,9 +236,10 @@ function generateGcode(tool /* 0-based */, flush, pull) {
   g += ";   - Settings: turn the Filament Sensor OFF\n";
   g += ";   - Settings: turn Auto Retract OFF\n";
   g += ";   - Remove the PTFE tube from this tool\n";
-  g += ";   - Have light-colored PLA ready and stay at the printer\n";
+  g += ";   - Have light-colored PLA ready and stay at the printer.\n";
+  g += ";     Do NOT preload it - a prompt says when to insert it.\n";
   g += "; ------------------------------------------------------------\n";
-  g += "; The procedure stops at several prompts and waits for a knob\n";
+  g += "; The procedure stops at six prompts and waits for a knob\n";
   g += "; press. To bail out, press the knob then Stop the print.\n";
   g += "; If you Stop at the tip check, the restore block never runs -\n";
   g += "; afterwards send M302 S170 and M591 R, or power-cycle, to put\n";
@@ -261,6 +270,12 @@ function generateGcode(tool /* 0-based */, flush, pull) {
   g += `M117 Heating to ${flush}\n`;
   g += `M109 S${flush}\n\n`;
 
+  g += "; The briefing must come BEFORE the purge: the screen and the nozzle\n";
+  g += "; cannot be watched at the same time, so tell the user what to look\n";
+  g += "; for, let them press, and only then start extruding.\n";
+  g += "M0 Purge next. Watch the nozzle tip for melted PLA flowing out. Press to start\n";
+  g += `M109 S${flush}             ; re-assert - the prompt is unbounded and the\n`;
+  g += "                      ; safety timer may have cleared the target\n";
   g += "M117 Purging - watch the tip\n";
   for (let i = 0; i < 3; i++) {
     g += "G1 E20 F120\n";
@@ -294,14 +309,27 @@ function generateGcode(tool /* 0-based */, flush, pull) {
   g += "M107\n\n";
 
   g += `M117 Reheating to ${pull}\n`;
-  g += `M104 S${pull}\n`;
-  g += `M109 R${pull}\n\n`;
+  g += "; Two-stage warm-up. Aimed straight at the target, the PID (not tuned\n";
+  g += "; for temperatures this low) overshoots, then waits ~30s to settle\n";
+  g += "; back down. Stop the first stage just short so the thermal momentum\n";
+  g += "; bleeds off, then close the last degrees under control. M109 C waits\n";
+  g += "; for a temperature WITHOUT changing the target (Buddy 6.6.2+; older\n";
+  g += "; firmware ignores it and just heats and waits as before).\n";
+  g += `M104 S${pull - 3}\n`;
+  g += `M109 C${pull - 4}\n`;
+  g += `M109 S${pull}\n\n`;
 
   g += `M0 Pull ready at ${pull}C. Motor will yank the plug - keep hands clear. Press to pull\n\n`;
 
   g += "M117 PULLING\n";
-  g += `M104 S${pull}              ; re-assert: yanking at high current against a\n`;
-  g += `M109 R${pull}              ; room-temperature plug can snap it or strain the drive\n`;
+  g += "; Re-assert before committing: the prompt above is unbounded, and\n";
+  g += "; yanking at high current against a plug that has cooled back to\n";
+  g += "; room temperature can snap it or strain the drive. Two stages for\n";
+  g += "; the same overshoot reason as above; at temperature already, all\n";
+  g += "; three return immediately.\n";
+  g += `M104 S${pull - 3}\n`;
+  g += `M109 C${pull - 4}\n`;
+  g += `M109 S${pull}\n`;
   g += "M906 E650             ; E current up for the stiff plug\n";
   g += "G1 E-40 F3000         ; 50mm/s yank\n";
   g += "G1 E-30 F1200         ; feed the strand up out of the gear\n";
@@ -310,7 +338,17 @@ function generateGcode(tool /* 0-based */, flush, pull) {
   g += "M302 S170             ; restore cold-extrusion guard\n";
   g += "M104 S0\n\n";
 
-  g += "M0 Pull done. Remove strand from top port. Pressing knob starts auto wipe and dock\n\n";
+  g += "M0 Pull done. Remove strand from top port. Pressing knob warms nozzle, then wipe and dock\n\n";
+
+  g += "; Rewarm before the end-of-print wipe. The pull left the nozzle near\n";
+  g += `; ${pull}C and the unbounded prompt above lets it fall to ambient, where\n`;
+  g += "; the wipe just drags solid strings around the printer. 170 softens\n";
+  g += "; PLA residue so the wiper takes it off; the heater then goes straight\n";
+  g += "; off and residual heat carries the few seconds of wipe and dock.\n";
+  g += "M117 Warming for the wipe\n";
+  g += "M109 S170\n";
+  g += "M104 S0               ; off before the teardown - nothing relies on the\n";
+  g += "                      ; firmware to switch the heater off afterwards\n\n";
 
   g += "M117 Finishing - hands off\n";
   g += "; The end-of-print sequence runs automatically after the last line:\n";
@@ -357,7 +395,11 @@ const serialGate = $("gate-serial");
 function updateGate() {
   const commonOk = commonGates.every((c) => c.checked);
   const remaining = commonGates.filter((c) => !c.checked).length;
-  $("download").disabled = !commonOk;
+  // `running` must gate the downloads here, not just in setRunning(): the
+  // checkboxes stay clickable during a serial run and every change lands in
+  // this function, so a mid-run toggle would otherwise re-enable them.
+  $("download").disabled = !commonOk || running;
+  $("download-all").disabled = !commonOk || running;
   $("run").disabled = !commonOk || !serialGate.checked || !serialSupported || running;
 
   let msg = "";
@@ -392,10 +434,88 @@ $("download").addEventListener("click", () => {
   showRestore(false);
 });
 
+/* ---------- All-nozzles download ----------
+   One .zip rather than eight separate downloads: browsers gate a second
+   programmatic download behind a "multiple downloads" permission that, when
+   denied, drops files silently -- and this page's rule is that nothing fails
+   silently. The zip is hand-rolled (store, no compression: the entries are a
+   few KB of text) to keep the page a single dependency-free file. */
+function crc32(bytes) {
+  if (!crc32.table) {
+    crc32.table = new Int32Array(256);
+    for (let n = 0; n < 256; n++) {
+      let c = n;
+      for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+      crc32.table[n] = c;
+    }
+  }
+  let crc = -1;
+  for (let i = 0; i < bytes.length; i++) crc = (crc >>> 8) ^ crc32.table[(crc ^ bytes[i]) & 0xff];
+  return (crc ^ -1) >>> 0;
+}
+
+function buildZip(files /* [{name, text}] */) {
+  const enc = new TextEncoder();
+  const u16 = (v) => [v & 255, (v >>> 8) & 255];
+  const u32 = (v) => [v & 255, (v >>> 8) & 255, (v >>> 16) & 255, (v >>> 24) & 255];
+  const now = new Date();
+  const dosTime = (now.getHours() << 11) | (now.getMinutes() << 5) | (now.getSeconds() >> 1);
+  const dosDate = (((now.getFullYear() - 1980) & 127) << 9) | ((now.getMonth() + 1) << 5) | now.getDate();
+  const chunks = [];
+  const central = [];
+  let offset = 0;
+  for (const f of files) {
+    const name = enc.encode(f.name);
+    const data = enc.encode(f.text);
+    const crc = crc32(data);
+    const local = new Uint8Array([
+      0x50, 0x4b, 0x03, 0x04, ...u16(20), ...u16(0), ...u16(0),
+      ...u16(dosTime), ...u16(dosDate), ...u32(crc),
+      ...u32(data.length), ...u32(data.length), ...u16(name.length), ...u16(0),
+    ]);
+    chunks.push(local, name, data);
+    central.push({ name, size: data.length, crc, offset });
+    offset += local.length + name.length + data.length;
+  }
+  const cdStart = offset;
+  for (const e of central) {
+    const hdr = new Uint8Array([
+      0x50, 0x4b, 0x01, 0x02, ...u16(20), ...u16(20), ...u16(0), ...u16(0),
+      ...u16(dosTime), ...u16(dosDate), ...u32(e.crc),
+      ...u32(e.size), ...u32(e.size), ...u16(e.name.length),
+      ...u16(0), ...u16(0), ...u16(0), ...u16(0), ...u32(0), ...u32(e.offset),
+    ]);
+    chunks.push(hdr, e.name);
+    offset += hdr.length + e.name.length;
+  }
+  chunks.push(new Uint8Array([
+    0x50, 0x4b, 0x05, 0x06, ...u16(0), ...u16(0),
+    ...u16(central.length), ...u16(central.length),
+    ...u32(offset - cdStart), ...u32(cdStart), ...u16(0),
+  ]));
+  return new Blob(chunks, { type: "application/zip" });
+}
+
+$("download-all").addEventListener("click", () => {
+  const s = settings();
+  const files = [];
+  for (let t = 0; t < 8; t++) {
+    files.push({ name: `cold_pull_nozzle${t + 1}.gcode`, text: generateGcode(t, s.flush, s.pull) });
+  }
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(buildZip(files));
+  a.download = "cold_pull_all_nozzles.zip";
+  a.click();
+  URL.revokeObjectURL(a.href);
+  say(`Saved cold_pull_all_nozzles.zip - one file per nozzle, flush ${s.flush}C, pull ${s.pull}C. Unzip into a folder on the USB drive.`, "good");
+  showRestore(false);
+});
+
 /* ============================================================
    Serial mode (Web Serial: Chrome/Edge desktop).
 
-   Mirrors the guarded serial path from the PrusaSlicer fork:
+   Mirrors the guarded serial path from the PrusaSlicer fork
+   (currently ahead of it -- see the README's Status section):
      - identify the printer with M115 and refuse anything but an INDX
      - arm the serial-print state machine with an instant G4 P1 so a
        long-blocking M109 cannot trip the 5s inactivity timeout that
@@ -410,7 +530,7 @@ let abort = false, forceStop = false, running = false;
 
 $("serial-note").textContent = serialSupported
   ? "Running over USB Serial drives the printer directly from this page and shows progress here. It additionally requires “Serial Printing Screen” turned off on the printer."
-  : "Running over USB Serial needs the Web Serial API (Chrome or Edge on desktop). Use the G-code download instead — it runs the identical procedure.";
+  : "Running over USB Serial needs the Web Serial API (Chrome or Edge on desktop). Use the G-code download instead — same procedure, and the USB-file route even adds the firmware's warm end-of-print wipe.";
 if (!serialSupported) $("run").disabled = true;
 
 function setRunning(on) {
@@ -419,10 +539,9 @@ function setRunning(on) {
   $("cancel").hidden = !on;
   $("force").hidden = !on;
   // Re-apply the gate rather than setting button state directly, so the
-  // prerequisites keep governing the buttons after a run ends.
-  $("download").disabled = on;
+  // prerequisites (and the running flag the gate reads) keep governing the
+  // buttons during and after a run.
   updateGate();
-  if (on) $("download").disabled = true;
 }
 // Without Web Serial the serial prerequisite is unreachable, so hide it rather
 // than leave an unsatisfiable checkbox on screen.
@@ -496,7 +615,8 @@ class Printer {
   }
 }
 
-/** Steps: [caption, command, timeoutMs]. Mirrors the fork's step table. */
+/** Steps: [caption, command, timeoutMs]. Mirrors the fork's step table
+    (currently ahead of it -- see the README's Status section). */
 function buildSteps(tool, flush, pull) {
   const T = `T${tool} M0`;
   const QUICK = 10e3, MOVE = 60e3, PICK = 240e3, HEAT = 900e3, COOL = 2400e3, PROMPT = 7200e3;
@@ -512,6 +632,11 @@ function buildSteps(tool, flush, pull) {
   s.push(["Insert filament at the printer, then press the knob",
     "M0 Insert light PLA into the top port until it stops at the drive gears. Do not force it", PROMPT]);
   s.push(["Heating nozzle to flush temperature", `M109 S${flush}`, HEAT]);
+  // Briefing before the purge: the screen and the nozzle cannot be watched
+  // at once, so say what to look for, wait for the press, then extrude.
+  s.push(["Read the purge prompt, then watch the nozzle tip",
+    "M0 Purge next. Watch the nozzle tip for melted PLA flowing out. Press to start", PROMPT]);
+  s.push(["Confirming nozzle is still at temperature", `M109 S${flush}`, HEAT]);
   s.push(["Confirming nozzle is picked", T, PICK]);
   for (let i = 0; i < 3; i++) {
     s.push([`Pushing filament through (${i + 1} of 3)`, "G1 E20 F120", MOVE]);
@@ -532,12 +657,20 @@ function buildSteps(tool, flush, pull) {
   s.push(["Turning the heater off", "M104 S0", QUICK]);
   s.push(["Holding 2 minutes to finish cooling", "G4 S120", 180e3]);
   s.push(["Fan off", "M107", QUICK]);
-  s.push(["Setting pull temperature", `M104 S${pull}`, QUICK]);
-  s.push(["Warming to pull temperature", `M109 R${pull}`, HEAT]);
+  // Two-stage warm-up: aimed straight at the pull temperature, the PID (not
+  // tuned for temperatures this low) overshoots and then spends ~30s settling
+  // back. M109 C waits for a temperature without changing the target
+  // (Buddy 6.6.2+; older firmware ignores it and the next step waits as before).
+  s.push(["Warming toward pull temperature", `M104 S${pull - 3}`, QUICK]);
+  s.push(["Approaching from just below", `M109 C${pull - 4}`, HEAT]);
+  s.push(["Settling at pull temperature", `M109 S${pull}`, HEAT]);
   s.push(["Keep hands clear, then press the knob to pull",
     `M0 Pull ready at ${pull}C. Motor will yank the plug - keep hands clear. Press to pull`, PROMPT]);
-  s.push(["Restoring pull temperature", `M104 S${pull}`, QUICK]);
-  s.push(["Confirming pull temperature", `M109 R${pull}`, HEAT]);
+  // Re-assert after the unbounded prompt, in the same two stages so a heater
+  // cleared by the safety timer does not overshoot on the way back up either.
+  s.push(["Restoring pull temperature", `M104 S${pull - 3}`, QUICK]);
+  s.push(["Approaching from just below", `M109 C${pull - 4}`, HEAT]);
+  s.push(["Confirming pull temperature", `M109 S${pull}`, HEAT]);
   s.push(["Confirming nozzle is picked", T, PICK]);
   s.push(["Raising extruder motor current", "M906 E650", QUICK]);
   s.push(["Pulling the plug out", "G1 E-40 F3000", MOVE]);
@@ -547,7 +680,17 @@ function buildSteps(tool, flush, pull) {
   s.push(["Restoring cold-extrusion guard", "M302 S170", QUICK]);
   s.push(["Turning the heater off", "M104 S0", QUICK]);
   s.push(["Remove the strand at the printer, then press the knob",
-    "M0 Done. Remove the strand and inspect the tip. Park the tool via Control menu when ready", PROMPT]);
+    "M0 Done. Remove the strand and inspect the tip. Press to warm the nozzle and dock the tool", PROMPT]);
+  // Warm dock, no manual parking. P0 S1 is the firmware's park-tool G-code
+  // (what Prusa's own end G-code sends); it docks the picked tool, stops its
+  // heater and is a no-op if nothing is picked. Warming first matters: docked
+  // at ambient, solidified strings drag through the dock instead of releasing.
+  // The wastebin brush wipe is end-of-print machinery that never runs over
+  // serial, so the dock is the only pass the nozzle gets here.
+  s.push(["Confirming nozzle is picked", T, PICK]);
+  s.push(["Warming the nozzle so residue releases in the dock", "M109 S170", HEAT]);
+  s.push(["Turning the heater off", "M104 S0", QUICK]);
+  s.push(["Docking the tool", "P0 S1", PICK]);
   s.push(["Releasing the motors", "M84", QUICK]);
   return s;
 }
