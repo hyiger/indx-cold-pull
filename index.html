@@ -742,6 +742,14 @@ $("run").addEventListener("click", async () => {
   // itself, which changes no state, so there is nothing to clean up anyway.
   let confirmedIndx = false;
 
+  // cleanup() deliberately never docks: after an arbitrary failure the plug
+  // or strand may still hang out of the tool, and dragging it through the
+  // dock could jam it. The price is that every early exit leaves the tool
+  // picked -- so track it and say so, rather than imply full restoration.
+  let toolPicked = false;
+  const parkNote = () =>
+    toolPicked ? " The tool is still on the carriage — park it from the printer's Control menu." : "";
+
   try {
     const port = await navigator.serial.requestPort();
     await port.open({ baudRate: 115200 });
@@ -771,8 +779,8 @@ $("run").addEventListener("click", async () => {
         outcome = forceStop ? "force-stopped" : "cancelled";
         if (forceStop) { await printer.write("M112"); say("M112 sent. Reset the printer before continuing.", "err"); break; }
         const ok = await cleanup(printer);
-        say(ok ? "Cancelled. Printer state restored."
-               : "Cancelled, but the printer did not confirm cleanup — CHECK IT DIRECTLY. The nozzle may still be hot.", ok ? "good" : "err");
+        say(ok ? "Cancelled. Printer state restored." + parkNote()
+               : "Cancelled, but the printer did not confirm cleanup — CHECK IT DIRECTLY. The nozzle may still be hot." + parkNote(), ok ? "good" : "err");
         break;
       }
       say(caption, "stage");
@@ -783,6 +791,8 @@ $("run").addEventListener("click", async () => {
         // possibly hot with cold extrusion enabled and stall detection off.
         await printer.write(cmd);
         await printer.untilOk(timeout, { honorForceStop: true });
+        if (cmd.startsWith("T")) toolPicked = true;
+        else if (cmd === "P0 S1") toolPicked = false;
       } catch (e) {
         outcome = forceStop ? "force-stopped" : "failed";
         if (forceStop) {
@@ -792,8 +802,8 @@ $("run").addEventListener("click", async () => {
         }
         say(`Failed: ${e.message}`, "err");
         const ok = await cleanup(printer);
-        say(ok ? "Printer state restored."
-               : "The printer did not confirm cleanup — CHECK IT DIRECTLY. The nozzle may still be hot, and the extrusion guard may still be disabled.", ok ? "good" : "err");
+        say(ok ? "Printer state restored." + parkNote()
+               : "The printer did not confirm cleanup — CHECK IT DIRECTLY. The nozzle may still be hot, and the extrusion guard may still be disabled." + parkNote(), ok ? "good" : "err");
         break;
       }
     }
@@ -812,8 +822,8 @@ $("run").addEventListener("click", async () => {
     // nothing, so there is nothing to restore.
     if (printer && confirmedIndx) {
       const ok = await cleanup(printer);
-      say(ok ? "Printer state restored."
-             : "The printer did not confirm cleanup — CHECK IT DIRECTLY. The nozzle may still be hot.", ok ? "good" : "err");
+      say(ok ? "Printer state restored." + parkNote()
+             : "The printer did not confirm cleanup — CHECK IT DIRECTLY. The nozzle may still be hot." + parkNote(), ok ? "good" : "err");
     }
   } finally {
     if (printer) await printer.close();
