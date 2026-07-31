@@ -790,9 +790,12 @@ $("run").addEventListener("click", async () => {
         // cleanup below and surfaced as a bare error -- leaving the nozzle
         // possibly hot with cold extrusion enabled and stall detection off.
         await printer.write(cmd);
-        await printer.untilOk(timeout, { honorForceStop: true });
+        // A pick can physically complete even when its ok is lost or arrives
+        // after the timeout, so consider the tool picked from the moment the
+        // command is dispatched; only a CONFIRMED dock clears it.
         if (cmd.startsWith("T")) toolPicked = true;
-        else if (cmd === "P0 S1") toolPicked = false;
+        await printer.untilOk(timeout, { honorForceStop: true });
+        if (cmd === "P0 S1") toolPicked = false;
       } catch (e) {
         outcome = forceStop ? "force-stopped" : "failed";
         if (forceStop) {
