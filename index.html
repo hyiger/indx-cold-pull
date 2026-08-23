@@ -94,22 +94,24 @@
   <div class="card warn">
     <strong>Do these at the printer first.</strong>
     <p class="note" style="margin:.4rem 0 .8rem">
-      None can be set or read over G-code — they are menu-only settings, so nothing here
-      can check them for you. Each fails <em>silently</em> rather than loudly.
+      Most are menu-only settings that can neither be read nor set over G-code, so nothing
+      here can check them for you, and each fails <em>silently</em> rather than loudly. The
+      filament-type item is the exception: that one is a change the procedure makes to your
+      printer's saved settings, and you need to know it is coming.
     </p>
     <ul class="checks">
       <li><label class="ck"><input type="checkbox" class="gate-common">
         <span><b>Filament Sensor → OFF</b>
         Otherwise the printer grabs and autoloads the filament while you are inserting it by hand.</span></label></li>
       <li><label class="ck"><input type="checkbox" class="gate-common">
-        <span><b>Auto Retract → OFF</b>
-        Otherwise the printer can treat the filament as retracted and discard the extrusion and pull moves. The procedure appears to run while nothing happens.</span></label></li>
-      <li><label class="ck"><input type="checkbox" class="gate-common">
         <span><b>PTFE tube removed from this tool</b>
         The pulled plug travels up and out of the top port. With the tube fitted there is nowhere for it to go.</span></label></li>
       <li><label class="ck"><input type="checkbox" class="gate-common">
         <span><b>Light-coloured PLA on hand, and you will stay at the printer</b>
         PLA shows the extracted debris clearly. Do not load it yet — a prompt on the printer's screen says when to insert it. The procedure waits for knob presses at six points, and the heaters switch off after ~30 minutes unattended.</span></label></li>
+      <li><label class="ck"><input type="checkbox" class="gate-common">
+        <span><b>This nozzle's filament type will be set to FLEX</b>
+        Firmware 6.9.0 removed the Auto Retract switch on INDX. Left to itself, auto retract pulls the plug back out of the melt zone and the extrusion and pull moves are discarded — the procedure appears to run while nothing happens. The firmware skips auto retract for flexible filaments, so the procedure marks this nozzle FLEX. That is a write to the printer's saved settings: USB Serial puts it back for you, the downloaded file cannot, and a power cycle does not.</span></label></li>
       <li id="serial-prereq"><label class="ck"><input type="checkbox" id="gate-serial">
         <span><b>USB Serial only: “Serial Printing Screen” → OFF, then reboot</b>
         Settings → Hardware → Experimental Settings. Left on, a 5-second inactivity timeout runs the end-of-print sequence mid-procedure, docking the tool while commands are still being sent. This crashes the printer with <code>E move without tool</code>. Not needed for the G-code download.</span></label></li>
@@ -163,8 +165,8 @@
     <ol>
       <li><b>Filament Sensor → ON</b><br>
         <span class="note">Left off, the printer will not detect a runout or jam during normal printing.</span></li>
-      <li><b>Auto Retract → ON</b><br>
-        <span class="note">Left off, filament is not retracted out of the melt zone at the end of a print, which invites the next clog.</span></li>
+      <li><b>Nozzle <span id="restore-tool">1</span> filament type → back to <span id="restore-filname">PLA</span></b><br>
+        <span class="note" id="restore-filnote"></span></li>
       <li><b>Refit the PTFE tube</b><br>
         <span class="note">Printing without it will not feed reliably.</span></li>
       <li id="restore-serial" hidden><b>“Serial Printing Screen” → back ON, if you want it</b><br>
@@ -178,8 +180,8 @@
     <tr><td>Flush</td><td>~60 mm of PLA at the flush temperature to displace old material.</td></tr>
     <tr><td>Pack</td><td>Small extrusions while cooling toward 180 °C, so the plug casts the nozzle interior.</td></tr>
     <tr><td>Deep cool</td><td>Fan-assisted to 60 °C with a fixed dwell, so the plug grips the debris.</td></tr>
-    <tr><td>Pull</td><td>Reheat to the pull temperature in two stages to avoid overshoot, raise motor current, retract hard.</td></tr>
-    <tr><td>Restore</td><td>Undo every session change: motor current, extrusion guard, stall detection.</td></tr>
+    <tr><td>Pull</td><td>Reheat to the pull temperature in two stages to avoid overshoot, raise motor current, retract 80 mm hard.</td></tr>
+    <tr><td>Restore</td><td>Undo every session change: motor current, extrusion guard, stall detection — and, over USB Serial, the filament type.</td></tr>
     <tr><td>Wipe &amp; dock</td><td>Rewarm the nozzle so residue releases instead of dragging cold strings, then dock automatically — no manual parking. The USB-file route also gets the firmware's end-of-print wastebin wipe, warm.</td></tr>
   </table>
   <p class="note" style="margin-top:.8rem">
@@ -187,12 +189,12 @@
     six in all: confirm setup, <strong>insert the PLA</strong> (not before), start the
     purge (from here, watch the nozzle tip for melted PLA flowing out), confirm what came
     out, start the pull, remove the strand. Success looks like three thin strands with
-    visible dark debris; repeat until the tip comes out clean, then re-enable the sensor
-    and auto retract and refit the PTFE tube.
+    visible dark debris; repeat until the tip comes out clean, then re-enable the filament
+    sensor, refit the PTFE tube, and put the nozzle's filament type back.
   </p>
 
   <footer>
-    Verified against Prusa-Firmware-Buddy <code>6.6.3+15625</code>.
+    Verified against Prusa-Firmware-Buddy <code>6.6.3+15625</code> and <code>6.9.0</code>.
     Use at your own risk — this drives a hot nozzle and a high-current motor.
     <br>
     <a href="https://github.com/hyiger/indx-cold-pull">Source</a> ·
@@ -223,6 +225,13 @@
        the pull moves.
      - Prompts are unbounded; past the ~30 min safety timer the heater
        target is cleared, so temperature is re-asserted after each one.
+     - Auto retract has no switch on INDX from firmware 6.9.0 onward.
+       It is suppressed by marking the tool FLEX, which the firmware
+       skips auto-retract for. That write lands in the printer's
+       persistent settings and the file cannot undo it safely, because
+       the end-of-print sequence runs after the last line and would
+       auto-retract as soon as the tool is back on PLA. Serial mode has
+       no end-of-print sequence, so it does restore the type itself.
    ============================================================ */
 function generateGcode(tool /* 0-based */, flush, pull) {
   const nozzle = tool + 1;
@@ -234,16 +243,33 @@ function generateGcode(tool /* 0-based */, flush, pull) {
   g += "; ------------------------------------------------------------\n";
   g += "; BEFORE RUNNING, at the printer:\n";
   g += ";   - Settings: turn the Filament Sensor OFF\n";
-  g += ";   - Settings: turn Auto Retract OFF\n";
   g += ";   - Remove the PTFE tube from this tool\n";
   g += ";   - Have light-colored PLA ready and stay at the printer.\n";
   g += ";     Do NOT preload it - a prompt says when to insert it.\n";
+  g += "; ------------------------------------------------------------\n";
+  g += "; AUTO RETRACT: there is no longer a switch for it on INDX.\n";
+  g += "; Firmware 6.9.0 moved the toggle behind HAS_SWITCHABLE_AUTO_RETRACT,\n";
+  g += "; which lists COREONE, COREONEL, MK4, iX and XL but neither INDX\n";
+  g += "; variant, so the menu item and the stored setting are both compiled\n";
+  g += "; out. The one lever left is the filament type: auto retract returns\n";
+  g += "; early for any filament marked flexible, and FLEX is the only preset\n";
+  g += "; that is. So the M865 line below marks this tool FLEX for the run.\n";
+  g += "; This file does NOT put it back, deliberately: the end-of-print\n";
+  g += "; sequence runs after the last line, and with the tool back on PLA\n";
+  g += "; that sequence would auto-retract - reheating the nozzle to 215C,\n";
+  g += "; overriding the warm-wipe temperature this file sets, and ramming\n";
+  g += "; the melt zone you just cleared. Put it back once the print has\n";
+  g += `; FINISHED - send M865 S"PLA" L${tool} or use the Filament menu. The\n`;
+  g += "; write is PERSISTENT; a power cycle does not undo it.\n";
   g += "; ------------------------------------------------------------\n";
   g += "; The procedure stops at six prompts and waits for a knob\n";
   g += "; press. To bail out, press the knob then Stop the print.\n";
   g += "; If you Stop at the tip check, the restore block never runs -\n";
   g += "; afterwards send M302 S170 and M591 R, or power-cycle, to put\n";
   g += "; back the cold-extrusion guard and stuck-filament detection.\n";
+  g += "; The filament type is not covered by a power cycle either, because\n";
+  g += `; it lives in the printer's settings: send M865 S"PLA" L${tool}, or\n`;
+  g += "; set this tool's filament back from the Filament menu.\n";
   g += "; A prompt left ~30 min turns the heaters off (safety timer); the\n";
   g += "; procedure re-asserts temperature after each prompt to cover that.\n";
   g += "; ------------------------------------------------------------\n";
@@ -257,10 +283,11 @@ function generateGcode(tool /* 0-based */, flush, pull) {
   g += "M862.3 P\"COREONEINDX\"   ; refuse to run on a non-INDX printer\n\n";
 
   g += "M117 Cold pull - guided\n";
-  g += "M0 Setup check: filament sensor OFF, auto retract OFF, PTFE tube removed. Press to continue\n\n";
+  g += "M0 Setup check: filament sensor OFF, PTFE tube removed. Press to continue\n\n";
 
   g += `M117 Picking nozzle ${nozzle}\n`;
   g += `T${tool} M0                 ; M0 param = ignore tool mapping\n`;
+  g += `M865 S"FLEX" L${tool}       ; suppress auto retract - see the note above\n`;
   g += "M302 S0               ; allow cold extrusion for the session\n";
   g += "M83                   ; relative E\n";
   g += "M591 S0               ; disable stuck-filament detection\n\n";
@@ -332,7 +359,7 @@ function generateGcode(tool /* 0-based */, flush, pull) {
   g += `M109 S${pull}\n`;
   g += "M906 E650             ; E current up for the stiff plug\n";
   g += "G1 E-40 F3000         ; 50mm/s yank\n";
-  g += "G1 E-30 F1200         ; feed the strand up out of the gear\n";
+  g += "G1 E-40 F1200         ; feed the strand up out of the gear\n";
   g += "M906 E550             ; restore INDX default current\n";
   g += "M591 R                ; restore stuck-filament detection\n";
   g += "M302 S170             ; restore cold-extrusion guard\n";
@@ -354,8 +381,10 @@ function generateGcode(tool /* 0-based */, flush, pull) {
   g += "; The end-of-print sequence runs automatically after the last line:\n";
   g += "; nozzle wipe, tool dock, steppers off. Wait for Finished.\n";
   g += "; Inspect the tip: three thin strands + debris = a good pull.\n";
-  g += "; Repeat until the tip comes out clean, then re-enable the\n";
-  g += "; Filament Sensor and Auto Retract and refit the PTFE tube.\n";
+  g += "; Repeat until the tip comes out clean. Then, at the printer:\n";
+  g += "; re-enable the Filament Sensor, refit the PTFE tube, and set this\n";
+  g += `; tool's filament type back to PLA (M865 S"PLA" L${tool}, or the\n`;
+  g += "; Filament menu). Nothing else puts that one back for you.\n";
 
   return g;
 }
@@ -380,10 +409,13 @@ function settings() {
 }
 
 /* ---------- Pre-flight gate ----------
-   The prerequisites are menu-only settings the page can neither read nor set,
-   and each fails silently: Auto Retract left on makes the whole procedure a
-   no-op with a hot nozzle. A wall of text gets skimmed, so the buttons stay
-   disabled until each item is explicitly confirmed.
+   Most prerequisites are menu-only settings the page can neither read nor set,
+   and each fails silently: the filament sensor left on grabs the filament out
+   of the user's fingers, the PTFE tube left in gives the plug nowhere to go.
+   The filament-type item is not a setting to change but consent to a change
+   the procedure makes, which is why it gates the buttons the same way. A wall
+   of text gets skimmed, so the buttons stay disabled until each item is
+   explicitly confirmed.
 
    Route-aware, matching the desktop version: "Serial Printing Screen" only
    affects a serial session, so it gates the serial button alone. Demanding it
@@ -412,8 +444,17 @@ function updateGate() {
 }
 [...commonGates, serialGate].forEach((c) => c.addEventListener("change", updateGate));
 
-/** Reveal the put-it-back reminder. The settings turned off above stay off. */
-function showRestore(afterRun) {
+/** Reveal the put-it-back reminder. The settings turned off above stay off.
+    `filName` is the filament type the nozzle should end up on: over serial that
+    is whatever was read back off the printer, and for a downloaded file there is
+    nothing to read, so it is PLA -- the filament the procedure has you insert. */
+function showRestore(afterRun, filName) {
+  const s = settings();
+  $("restore-tool").textContent = s.nozzle;
+  $("restore-filname").textContent = filName || "PLA";
+  $("restore-filnote").textContent = afterRun
+    ? `Serial mode sends this itself at the end of a clean run. Verify it under the printer's Filament menu — a run that stopped early leaves the nozzle marked FLEX, and a power cycle does not undo that.`
+    : `The file marks the nozzle FLEX to suppress auto retract and deliberately does not set it back: doing that before the last line would let the end-of-print sequence reheat to 215 °C and ram the melt zone you just cleared. Once the print has finished, send M865 S"PLA" L${s.tool} or use the printer's Filament menu. A power cycle does not undo it.`;
   $("restore-title").textContent = afterRun
     ? "Before your next print, put these back"
     : "After you have run the file, put these back";
@@ -616,16 +657,26 @@ class Printer {
 }
 
 /** Steps: [caption, command, timeoutMs]. Mirrors the fork's step table
-    (currently ahead of it -- see the README's Status section). */
-function buildSteps(tool, flush, pull) {
+    (currently ahead of it -- see the README's Status section).
+    `origFilament` is the tool's filament type as read back from the printer
+    before the run; the restore step puts exactly that value back. */
+function buildSteps(tool, flush, pull, origFilament) {
   const T = `T${tool} M0`;
   const QUICK = 10e3, MOVE = 60e3, PICK = 240e3, HEAT = 900e3, COOL = 2400e3, PROMPT = 7200e3;
   const s = [];
   s.push(["Confirm the setup prompt on the printer",
-    "M0 Setup check: filament sensor OFF, auto retract OFF, PTFE tube removed. Press to continue", PROMPT]);
+    "M0 Setup check: filament sensor OFF, PTFE tube removed. Press to continue", PROMPT]);
   // Arm with an instant G-command; see the note above.
   s.push(["Starting session", "G4 P1", QUICK]);
   s.push(["Picking nozzle from its dock", T, PICK]);
+  // Firmware 6.9.0 removed the Auto Retract switch on INDX -- the toggle now
+  // sits behind HAS_SWITCHABLE_AUTO_RETRACT, which does not list either INDX
+  // variant, so the menu item and the stored setting are compiled out. What
+  // survives is an unconditional early return in maybe_retract_from_nozzle()
+  // for filaments marked is_flexible, and FLEX is the only preset that is.
+  // Marking the tool FLEX is therefore the only remaining way to stop the
+  // firmware retracting the plug back out of the melt zone mid-procedure.
+  s.push(["Marking the tool FLEX to suppress auto retract", `M865 S"FLEX" L${tool}`, QUICK]);
   s.push(["Allowing cold extrusion", "M302 S0", QUICK]);
   s.push(["Switching to relative extrusion", "M83", QUICK]);
   s.push(["Disabling stuck-filament detection", "M591 S0", QUICK]);
@@ -674,7 +725,7 @@ function buildSteps(tool, flush, pull) {
   s.push(["Confirming nozzle is picked", T, PICK]);
   s.push(["Raising extruder motor current", "M906 E650", QUICK]);
   s.push(["Pulling the plug out", "G1 E-40 F3000", MOVE]);
-  s.push(["Feeding the strand up and out", "G1 E-30 F1200", MOVE]);
+  s.push(["Feeding the strand up and out", "G1 E-40 F1200", MOVE]);
   s.push(["Restoring motor current", "M906 E550", QUICK]);
   s.push(["Restoring stuck-filament detection", "M591 R", QUICK]);
   s.push(["Restoring cold-extrusion guard", "M302 S170", QUICK]);
@@ -692,12 +743,22 @@ function buildSteps(tool, flush, pull) {
   s.push(["Turning the heater off", "M104 S0", QUICK]);
   s.push(["Docking the tool", "P0 S1", PICK]);
   s.push(["Releasing the motors", "M84", QUICK]);
+  // Last, deliberately: FLEX has to stay in force through the warm-up and the
+  // dock above, or the firmware would auto-retract the moment the tool reads
+  // as PLA again. Safe to do at all here, unlike in the downloadable file,
+  // because a serial session has no end-of-print sequence after it.
+  s.push(["Restoring the tool's filament type", `M865 S"${origFilament}" L${tool}`, QUICK]);
   return s;
 }
 
-async function cleanup(printer) {
+async function cleanup(printer, tool, origFilament, flexApplied) {
   say("Restoring printer state…", "stage");
-  const cmds = ["M104 S0", "M107", "M302 S170", "M591 R", "M906 E550", "M84"];
+  // The filament-type restore is conditional: M865 writes to the printer's
+  // persistent settings, so sending it when the FLEX step never ran would
+  // change a tool this session never touched. flexApplied is only set once
+  // the printer has acknowledged the FLEX write.
+  const cmds = ["M104 S0", "M107", "M302 S170", "M591 R", "M906 E550",
+    ...(flexApplied ? [`M865 S"${origFilament}" L${tool}`] : []), "M84"];
   let allConfirmed = true;
   for (const c of cmds) {
     // Force stop must work from here: cleanup can block behind an M0 prompt,
@@ -750,6 +811,16 @@ $("run").addEventListener("click", async () => {
   const parkNote = () =>
     toolPicked ? " The tool is still on the carriage — park it from the printer's Control menu." : "";
 
+  // Auto retract cannot be switched off on INDX from firmware 6.9.0 (see
+  // buildSteps). It is suppressed by marking the tool FLEX, which is a write
+  // to the printer's persistent settings -- so the tool's real filament type
+  // is read back first and put back verbatim, rather than guessing "PLA" and
+  // leaving the printer describing a spool it does not have. `flexApplied`
+  // gates that restore: until the FLEX write is acknowledged there is nothing
+  // to undo, and sending M865 anyway would change a tool we never touched.
+  let origFilament = "PLA";
+  let flexApplied = false;
+
   try {
     const port = await navigator.serial.requestPort();
     await port.open({ baudRate: 115200 });
@@ -773,12 +844,26 @@ $("run").addEventListener("click", async () => {
     confirmedIndx = true;
     say(`Confirmed ${model}.`, "good");
 
-    const steps = buildSteps(s.tool, s.flush, s.pull);
+    // M865 I<n> echoes the tool's filament as "name:<TYPE>"; a tool with no
+    // filament type set echoes nothing at all, which is why the absence of a
+    // match is reported rather than silently defaulting.
+    say("Reading the tool's filament type…", "stage");
+    await printer.write(`M865 I${s.tool}`);
+    const filInfo = await printer.untilOk(10000, { collect: true });
+    const filMatch = filInfo.join("\n").match(/^name:([A-Za-z0-9_-]+)\s*$/m);
+    if (filMatch) {
+      origFilament = filMatch[1];
+      say(`Nozzle ${s.nozzle} is set to ${origFilament}; it will be put back after the pull.`);
+    } else {
+      say(`Nozzle ${s.nozzle} has no filament type set. It will be left as PLA afterwards — clear it from the printer's Filament menu if you want it empty.`, "err");
+    }
+
+    const steps = buildSteps(s.tool, s.flush, s.pull, origFilament);
     for (const [caption, cmd, timeout] of steps) {
       if (abort) {
         outcome = forceStop ? "force-stopped" : "cancelled";
         if (forceStop) { await printer.write("M112"); say("M112 sent. Reset the printer before continuing.", "err"); break; }
-        const ok = await cleanup(printer);
+        const ok = await cleanup(printer, s.tool, origFilament, flexApplied);
         say(ok ? "Cancelled. Printer state restored." + parkNote()
                : "Cancelled, but the printer did not confirm cleanup — CHECK IT DIRECTLY. The nozzle may still be hot." + parkNote(), ok ? "good" : "err");
         break;
@@ -796,6 +881,7 @@ $("run").addEventListener("click", async () => {
         if (cmd.startsWith("T")) toolPicked = true;
         await printer.untilOk(timeout, { honorForceStop: true });
         if (cmd === "P0 S1") toolPicked = false;
+        if (cmd.startsWith('M865 S"FLEX"')) flexApplied = true;
       } catch (e) {
         outcome = forceStop ? "force-stopped" : "failed";
         if (forceStop) {
@@ -804,7 +890,7 @@ $("run").addEventListener("click", async () => {
           break;
         }
         say(`Failed: ${e.message}`, "err");
-        const ok = await cleanup(printer);
+        const ok = await cleanup(printer, s.tool, origFilament, flexApplied);
         say(ok ? "Printer state restored." + parkNote()
                : "The printer did not confirm cleanup — CHECK IT DIRECTLY. The nozzle may still be hot, and the extrusion guard may still be disabled." + parkNote(), ok ? "good" : "err");
         break;
@@ -824,7 +910,7 @@ $("run").addEventListener("click", async () => {
     // protect. Before the gate passes only M115 has been sent, which changes
     // nothing, so there is nothing to restore.
     if (printer && confirmedIndx) {
-      const ok = await cleanup(printer);
+      const ok = await cleanup(printer, s.tool, origFilament, flexApplied);
       say(ok ? "Printer state restored." + parkNote()
              : "The printer did not confirm cleanup — CHECK IT DIRECTLY. The nozzle may still be hot." + parkNote(), ok ? "good" : "err");
     }
@@ -835,7 +921,7 @@ $("run").addEventListener("click", async () => {
     // force stop, model rejection, an exception before the loop, and the early
     // returns where nothing was ever sent. See the note on `started` above --
     // the settings were already changed on the printer before this ran.
-    if (started) showRestore(true);
+    if (started) showRestore(true, origFilament);
   }
 });
 
