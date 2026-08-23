@@ -30,7 +30,7 @@ reading further:
 | **Filament Sensor → OFF** | Otherwise the printer grabs and autoloads the filament while you are inserting it by hand. |
 | **Remove the PTFE tube from this tool** | The pulled plug travels 80 mm up and out of the top port. With the tube fitted there is nowhere for it to go. |
 | **Light-coloured PLA, and stay at the printer** | PLA shows the debris clearly. Do **not** load it beforehand — a prompt on the printer's screen says when to insert it. The procedure waits for knob presses at six points, and the heaters switch off after ~30 minutes unattended. |
-| **This nozzle's filament type gets set to FLEX** | Nothing for you to do up front, but read [Auto retract](#auto-retract) below. Firmware 6.9.0 removed the Auto Retract switch on INDX, and FLEX is the only remaining way to suppress it. This is a *persistent* change to the printer's settings that you have to put back. |
+| **This nozzle's filament type gets set to FLEX — note what it is now** | Firmware 6.9.0 removed the Auto Retract switch on INDX, and FLEX is the only remaining way to suppress it; see [Auto retract](#auto-retract) below. This is a *persistent* change to the printer's settings that you have to put back. USB Serial reads the current type and restores that exact value for you. The downloaded file cannot read anything, so **write down what Settings → Filament shows for this nozzle before you start.** |
 
 Serial mode additionally needs **Settings → Hardware → Experimental Settings →
 "Serial Printing Screen" → OFF** (then reboot). See [the firmware bug](#firmware-bug)
@@ -56,7 +56,7 @@ Success looks like **three thin strands with visible dark debris**. Repeat until
 the tip comes out clean, typically one to three cycles.
 
 **Then put the settings back.** Filament Sensor on, PTFE tube refitted, and the
-nozzle's filament type back off FLEX. The page shows this reminder once you
+nozzle's filament type back off FLEX — to whatever it was before, not to PLA. The page shows this reminder once you
 download a file or finish a run, because the settings you turned off stay off: a
 printer left that way will not detect a runout, and a nozzle left marked FLEX
 will not auto-retract at the end of a print, which invites the next clog.
@@ -127,9 +127,11 @@ and a power cycle does not undo it.
 - **The downloaded file does not**, on purpose. The end-of-print sequence runs
   after the last line of the file; with the nozzle already back on PLA, that
   sequence would auto-retract — reheating to 215 °C, overriding the 170 °C the file
-  sets for the warm wipe, and ramming the melt zone you just cleared. Send
-  `M865 S"PLA" L<n>` once the print has **finished**, or set it from the printer's
-  Filament menu.
+  sets for the warm wipe, and ramming the melt zone you just cleared. Once the
+  print has **finished**, send `M865 S"<TYPE>" L<n>` with the type you noted before
+  starting, or set it from the printer's Filament menu. **Do not assume it was
+  PLA** — sending PLA to a nozzle configured as PETG or ASA silently overwrites
+  that, which is worse than the state you were trying to restore.
 
 One thing FLEX does *not* fix: a retraction already banked in persistent storage.
 While the firmware believes a nozzle is retracted, `planner.cpp` silently swallows
