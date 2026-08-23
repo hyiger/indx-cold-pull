@@ -165,7 +165,7 @@
     <ol>
       <li><b>Filament Sensor → ON</b><br>
         <span class="note">Left off, the printer will not detect a runout or jam during normal printing.</span></li>
-      <li id="restore-filament" hidden><b>Nozzle <span id="restore-tool">1</span> filament type → back to <span id="restore-filname">what it was</span></b><br>
+      <li id="restore-filament" hidden><b id="restore-filhead"></b><br>
         <span class="note" id="restore-filnote"></span></li>
       <li><b>Refit the PTFE tube</b><br>
         <span class="note">Printing without it will not feed reliably.</span></li>
@@ -462,15 +462,26 @@ function updateGate() {
     `filName` is what the nozzle should end up on. Over serial that is the value
     read back off the printer before the run, so it is exact. A downloaded file
     cannot query anything, so it says "what it was" and leans on the note the
-    user was asked to make in the prerequisites. */
-function showRestore(afterRun, filName, filChanged) {
-  const s = settings();
+    user was asked to make in the prerequisites.
+
+    `tool` is the 0-based nozzle this reminder is about, passed in rather than
+    re-read from settings(): the serial run works from a snapshot taken when Run
+    was clicked, so reading the selector again here would name whatever nozzle
+    happens to be selected NOW and pair it with the filament type read off the
+    one that actually ran. Following that would edit the wrong nozzle and leave
+    the right one marked FLEX. Pass null when the reminder is not about one
+    specific nozzle -- the all-nozzles zip covers all eight, and naming the
+    selected one would be wrong for the seven others. */
+function showRestore(afterRun, filName, filChanged, tool) {
+  const oneNozzle = Number.isInteger(tool);
+  const target = filName || "what it was";
   $("restore-filament").hidden = !filChanged;
-  $("restore-tool").textContent = s.nozzle;
-  $("restore-filname").textContent = filName || "what it was";
+  $("restore-filhead").textContent = oneNozzle
+    ? `Nozzle ${tool + 1} filament type → back to ${target}`
+    : `Filament type of whichever nozzle you run a file for → back to ${target}`;
   $("restore-filnote").textContent = afterRun
     ? `Serial mode sends this itself at the end of a clean run. Verify it under the printer's Filament menu — a run that stopped early leaves the nozzle marked FLEX, and a power cycle does not undo that.`
-    : `The file marks the nozzle FLEX to suppress auto retract and deliberately does not set it back: doing that before the last line would let the end-of-print sequence reheat to 215 °C and ram the melt zone you just cleared. Once the print has finished, set the nozzle back to the type you noted before starting — M865 S"<TYPE>" L${s.tool}, or the printer's Filament menu. A power cycle does not undo it.`;
+    : `Each file marks its own nozzle FLEX to suppress auto retract and deliberately does not set it back: doing that before the last line would let the end-of-print sequence reheat to 215 °C and ram the melt zone you just cleared. Once a print has finished, set that nozzle back to the type you noted before starting — M865 S"<TYPE>" L${oneNozzle ? tool : "<n>"}, where <n> is the 0-based index of the nozzle the file was for. A power cycle does not undo it.`;
   $("restore-title").textContent = afterRun
     ? "Before your next print, put these back"
     : "After you have run the file, put these back";
@@ -488,7 +499,7 @@ $("download").addEventListener("click", () => {
   a.click();
   URL.revokeObjectURL(a.href);
   say(`Saved cold_pull_nozzle${s.nozzle}.gcode. Copy it to a USB drive and start it on the printer.`, "good");
-  showRestore(false, null, true);
+  showRestore(false, null, true, s.tool);
 });
 
 /* ---------- All-nozzles download ----------
@@ -565,7 +576,9 @@ $("download-all").addEventListener("click", () => {
   a.click();
   URL.revokeObjectURL(a.href);
   say(`Saved cold_pull_all_nozzles.zip - one file per nozzle, flush ${s.flush}C, pull ${s.pull}C. Unzip into a folder on the USB drive.`, "good");
-  showRestore(false, null, true);
+  // Nozzle-neutral: the archive covers all eight, so naming the selected one
+  // would be wrong for the seven other files in it.
+  showRestore(false, null, true, null);
 });
 
 /* ============================================================
@@ -595,6 +608,11 @@ function setRunning(on) {
   $("run").hidden = on;
   $("cancel").hidden = !on;
   $("force").hidden = !on;
+  // Freeze the inputs for the duration. The run works from a snapshot taken
+  // when Run was clicked, so a selector changed during one of the long prompts
+  // would only ever mislead -- the commands already in flight are for the
+  // nozzle that was selected then.
+  ["nozzle", "flush", "pull"].forEach((id) => { $(id).disabled = on; });
   // Re-apply the gate rather than setting button state directly, so the
   // prerequisites (and the running flag the gate reads) keep governing the
   // buttons during and after a run.
@@ -946,7 +964,9 @@ $("run").addEventListener("click", async () => {
     // flexApplied, not `started`: the other rows are things the user changed at
     // the printer before pressing Run, so they are owed on every exit. The
     // filament type is only owed if this page actually sent the write.
-    if (started) showRestore(true, origFilament, flexApplied);
+    // s.tool, not a fresh settings() read: this run's commands and origFilament
+    // both came from the snapshot taken when Run was clicked.
+    if (started) showRestore(true, origFilament, flexApplied, s.tool);
   }
 });
 
