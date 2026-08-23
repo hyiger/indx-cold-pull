@@ -211,9 +211,10 @@
    Ported from generate_cold_pull_gcode() in the PrusaSlicer fork
    (src/slic3r/Utils/MaintenanceSerial.cpp), normally kept
    byte-identical to it. If you change the procedure, change it in
-   both places. CURRENTLY AHEAD of the fork: the issue #3 changes
-   (purge briefing, two-stage warm-up, warm wipe, serial dock) are
-   not yet ported back -- see the README's Status section.
+   both places. The issue #3 changes (purge briefing, two-stage
+   warm-up, warm wipe, serial dock) and the 6.9.0 auto-retract work
+   are ported back in hyiger/PrusaSlicer#55; until that lands the fork
+   still emits the older sequence.
 
    Constraints that shaped this, all verified against firmware:
      - M0 messages: whole line <= 95 chars (MAX_CMD_SIZE 96), first
@@ -556,7 +557,7 @@ $("download-all").addEventListener("click", () => {
    Serial mode (Web Serial: Chrome/Edge desktop).
 
    Mirrors the guarded serial path from the PrusaSlicer fork
-   (currently ahead of it -- see the README's Status section):
+   (ported back in hyiger/PrusaSlicer#55):
      - identify the printer with M115 and refuse anything but an INDX
      - arm the serial-print state machine with an instant G4 P1 so a
        long-blocking M109 cannot trip the 5s inactivity timeout that
@@ -657,7 +658,7 @@ class Printer {
 }
 
 /** Steps: [caption, command, timeoutMs]. Mirrors the fork's step table
-    (currently ahead of it -- see the README's Status section).
+    (ported back in hyiger/PrusaSlicer#55).
     `origFilament` is the tool's filament type as read back from the printer
     before the run; the restore step puts exactly that value back. */
 function buildSteps(tool, flush, pull, origFilament) {

@@ -189,9 +189,11 @@ and re-check:
 diff <(node -e 'eval(require("fs").readFileSync("index.html","utf8").match(/<script>([\s\S]*?)<\/script>/)[1].match(/function generateGcode[\s\S]*?\n}/)[0]); process.stdout.write(generateGcode(0,290,80))') reference.gcode
 ```
 
-This check currently fails against a fork-generated `reference.gcode`: the
-issue #3 changes and the 6.9.0 auto-retract work are both ahead of the fork
-until they are ported back — see [Status](#status).
+The two are in sync again as of
+[hyiger/PrusaSlicer#55](https://github.com/hyiger/PrusaSlicer/pull/55), which
+ports the issue #3 changes and the 6.9.0 auto-retract work back to the fork;
+byte-identity was verified across several `(tool, flush, pull)` combinations.
+The check fails against a `reference.gcode` generated before that lands.
 
 ## Status
 
@@ -207,9 +209,8 @@ The changes from
 [issue #3](https://github.com/hyiger/indx-cold-pull/issues/3) — the pre-purge
 briefing prompt, the two-stage warm-up to the pull temperature, the warm wipe,
 and the automatic dock at the end of a serial run — plus the 6.9.0 auto-retract
-workaround and the 80 mm pull are all newer than that hardware run and have not
-yet been tested on a printer, so the two implementations are temporarily out of
-sync.
+workaround and the 80 mm pull are all newer than that hardware run and **have
+not yet been tested on a printer**. Treat a first run as a test.
 
 **Use at your own risk.** This drives a hot nozzle and a high-current motor.
 
