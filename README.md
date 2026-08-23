@@ -30,7 +30,7 @@ reading further:
 | **Filament Sensor → OFF** | Otherwise the printer grabs and autoloads the filament while you are inserting it by hand. |
 | **Remove the PTFE tube from this tool** | The pulled plug travels 80 mm up and out of the top port. With the tube fitted there is nowhere for it to go. |
 | **Light-coloured PLA, and stay at the printer** | PLA shows the debris clearly. Do **not** load it beforehand — a prompt on the printer's screen says when to insert it. The procedure waits for knob presses at six points, and the heaters switch off after ~30 minutes unattended. |
-| **This nozzle's filament type gets set to FLEX — note what it is now** | Firmware 6.9.0 removed the Auto Retract switch on INDX, and FLEX is the only remaining way to suppress it; see [Auto retract](#auto-retract) below. This is a *persistent* change to the printer's settings that you have to put back. USB Serial reads the current type and restores that exact value for you. The downloaded file cannot read anything, so **write down what Settings → Filament shows for this nozzle before you start.** |
+| **This nozzle's filament type gets set to FLEX — note what it is now** | Firmware 6.9.0 removed the Auto Retract switch on INDX, and FLEX is the only remaining way to suppress it; see [Auto retract](#auto-retract) below. This is a *persistent* change to the printer's settings that you have to put back. USB Serial reads the current type and restores that exact value for you, except for names it cannot send back over G-code, where it writes nothing and tells you what to set by hand. The downloaded file cannot read anything, so **write down what Settings → Filament shows for this nozzle before you start.** |
 
 Serial mode additionally needs **Settings → Hardware → Experimental Settings →
 "Serial Printing Screen" → OFF** (then reboot). See [the firmware bug](#firmware-bug)
@@ -123,7 +123,14 @@ and a power cycle does not undo it.
 
 - **USB Serial** reads the nozzle's real filament type first (`M865 I<n>`) and
   restores exactly that value — as the very last command of the run, after the warm
-  dock, so nothing in between can auto-retract — and in its cleanup path.
+  dock, so nothing in between can auto-retract — and in its cleanup path. The one
+  exception is a name it cannot quote back into `M865`, such as one containing a
+  space or punctuation. The firmware will store one: an NFC abbreviation that fails
+  its own name validation is kept anyway, with the dataset merely flagged unsafe.
+  Rather than overwrite it with a value nobody chose, the run writes **nothing**
+  back — the nozzle is left marked FLEX and the page hands you the exact name to
+  restore by hand. Watch for that message; a nozzle left FLEX will not auto-retract
+  at the end of your next print.
 - **The downloaded file does not**, on purpose. The end-of-print sequence runs
   after the last line of the file; with the nozzle already back on PLA, that
   sequence would auto-retract — reheating to 215 °C, overriding the 170 °C the file
