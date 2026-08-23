@@ -472,14 +472,16 @@ function updateGate() {
     the right one marked FLEX. Pass null when the reminder is not about one
     specific nozzle -- the all-nozzles zip covers all eight, and naming the
     selected one would be wrong for the seven others. */
-function showRestore(afterRun, filName, filChanged, tool) {
+function showRestore(afterRun, filName, filChanged, tool, autoRestored = true) {
   const oneNozzle = Number.isInteger(tool);
   const target = filName || "what it was";
   $("restore-filament").hidden = !filChanged;
   $("restore-filhead").textContent = oneNozzle
     ? `Nozzle ${tool + 1} filament type → back to ${target}`
     : `Filament type of whichever nozzle you run a file for → back to ${target}`;
-  $("restore-filnote").textContent = afterRun
+  $("restore-filnote").textContent = !autoRestored
+    ? `"${target}" is not a name this page can send over G-code, so nothing was written back and the nozzle is still marked FLEX. Set it to "${target}" yourself under the printer's Filament menu — a power cycle does not undo it.`
+    : afterRun
     ? `Serial mode sends this itself at the end of a clean run. Verify it under the printer's Filament menu — a run that stopped early leaves the nozzle marked FLEX, and a power cycle does not undo that.`
     : `Each file marks its own nozzle FLEX to suppress auto retract and deliberately does not set it back: doing that before the last line would let the end-of-print sequence reheat to 215 °C and ram the melt zone you just cleared. Once a print has finished, set that nozzle back to the type you noted before starting — M865 S"<TYPE>" L${oneNozzle ? tool : "<n>"}, where <n> is the 0-based index of the nozzle the file was for. A power cycle does not undo it.`;
   $("restore-title").textContent = afterRun
@@ -694,7 +696,7 @@ class Printer {
     (ported back in hyiger/PrusaSlicer#55).
     `origFilament` is the tool's filament type as read back from the printer
     before the run; the restore step puts exactly that value back. */
-function buildSteps(tool, flush, pull, origFilament) {
+function buildSteps(tool, flush, pull, origFilament /* null = do not restore */) {
   const T = `T${tool} M0`;
   const QUICK = 10e3, MOVE = 60e3, PICK = 240e3, HEAT = 900e3, COOL = 2400e3, PROMPT = 7200e3;
   const s = [];
@@ -781,7 +783,13 @@ function buildSteps(tool, flush, pull, origFilament) {
   // dock above, or the firmware would auto-retract the moment the tool reads
   // as PLA again. Safe to do at all here, unlike in the downloadable file,
   // because a serial session has no end-of-print sequence after it.
-  s.push(["Restoring the tool's filament type", `M865 S"${origFilament}" L${tool}`, QUICK]);
+  //
+  // Omitted entirely when origFilament is null: the nozzle is carrying a name
+  // this page cannot quote back into M865, and leaving it FLEX with a loud
+  // message beats overwriting it with something invented.
+  if (origFilament !== null) {
+    s.push(["Restoring the tool's filament type", `M865 S"${origFilament}" L${tool}`, QUICK]);
+  }
   return s;
 }
 
@@ -854,6 +862,10 @@ $("run").addEventListener("click", async () => {
   // to undo, and sending M865 anyway would change a tool we never touched.
   let origFilament = "PLA";
   let flexApplied = false;
+  // Set when the reported name is one this page can send back verbatim. A name
+  // it cannot round-trip is NOT a licence to invent one -- see the read-back.
+  let filamentRestorable = true;
+  let origFilamentRaw = "";
 
   try {
     const port = await navigator.serial.requestPort();
@@ -878,26 +890,43 @@ $("run").addEventListener("click", async () => {
     confirmedIndx = true;
     say(`Confirmed ${model}.`, "good");
 
-    // M865 I<n> echoes the tool's filament as "name:<TYPE>"; a tool with no
-    // filament type set echoes nothing at all, which is why the absence of a
-    // match is reported rather than silently defaulting.
+    // M865 I<n> echoes the tool's filament as "name:<TYPE>". Three outcomes,
+    // and the only one that may end in a value this page chose is the one where
+    // the printer reports no name at all:
+    //
+    //   no name line     -> the tool genuinely has no filament type. There is no
+    //                       G-code that sets one back to "none", so it ends up
+    //                       PLA, which is at least what was in it during the
+    //                       procedure. Said out loud rather than defaulted.
+    //   safe name        -> restored verbatim.
+    //   unsendable name  -> left alone. The firmware will store an NFC
+    //                       abbreviation that fails its own name validation
+    //                       (openprinttag/data_utils.cpp marks the data unsafe
+    //                       but keeps the name), so a nozzle really can be
+    //                       carrying something this page cannot quote back into
+    //                       M865. Overwriting it with PLA would destroy the
+    //                       exact thing the read-back exists to preserve.
     say("Reading the tool's filament type…", "stage");
     await printer.write(`M865 I${s.tool}`);
     const filInfo = await printer.untilOk(10000, { collect: true });
-    const filMatch = filInfo.join("\n").match(/^name:([A-Za-z0-9_-]+)\s*$/m);
-    if (filMatch) {
-      origFilament = filMatch[1];
+    const nameLine = filInfo.join("\n").match(/^name:(.*)$/m);
+    origFilamentRaw = nameLine ? nameLine[1].trim() : "";
+    if (!origFilamentRaw) {
+      say(`Nozzle ${s.nozzle} has no filament type set. It will be left as PLA afterwards — clear it from the printer's Filament menu if you want it empty.`, "err");
+    } else if (/^[A-Za-z0-9_-]+$/.test(origFilamentRaw)) {
+      origFilament = origFilamentRaw;
       say(`Nozzle ${s.nozzle} is set to ${origFilament}; it will be put back after the pull.`);
     } else {
-      say(`Nozzle ${s.nozzle} has no filament type set. It will be left as PLA afterwards — clear it from the printer's Filament menu if you want it empty.`, "err");
+      filamentRestorable = false;
+      say(`Nozzle ${s.nozzle} is set to "${origFilamentRaw}", a name this page cannot send back over G-code. Nothing will be written back — the nozzle will be left marked FLEX, and you must set it to "${origFilamentRaw}" yourself from the printer's Filament menu.`, "err");
     }
 
-    const steps = buildSteps(s.tool, s.flush, s.pull, origFilament);
+    const steps = buildSteps(s.tool, s.flush, s.pull, filamentRestorable ? origFilament : null);
     for (const [caption, cmd, timeout] of steps) {
       if (abort) {
         outcome = forceStop ? "force-stopped" : "cancelled";
         if (forceStop) { await printer.write("M112"); say("M112 sent. Reset the printer before continuing.", "err"); break; }
-        const ok = await cleanup(printer, s.tool, origFilament, flexApplied);
+        const ok = await cleanup(printer, s.tool, origFilament, flexApplied && filamentRestorable);
         say(ok ? "Cancelled. Printer state restored." + parkNote()
                : "Cancelled, but the printer did not confirm cleanup — CHECK IT DIRECTLY. The nozzle may still be hot." + parkNote(), ok ? "good" : "err");
         break;
@@ -930,7 +959,7 @@ $("run").addEventListener("click", async () => {
           break;
         }
         say(`Failed: ${e.message}`, "err");
-        const ok = await cleanup(printer, s.tool, origFilament, flexApplied);
+        const ok = await cleanup(printer, s.tool, origFilament, flexApplied && filamentRestorable);
         say(ok ? "Printer state restored." + parkNote()
                : "The printer did not confirm cleanup — CHECK IT DIRECTLY. The nozzle may still be hot, and the extrusion guard may still be disabled." + parkNote(), ok ? "good" : "err");
         break;
@@ -950,7 +979,7 @@ $("run").addEventListener("click", async () => {
     // protect. Before the gate passes only M115 has been sent, which changes
     // nothing, so there is nothing to restore.
     if (printer && confirmedIndx) {
-      const ok = await cleanup(printer, s.tool, origFilament, flexApplied);
+      const ok = await cleanup(printer, s.tool, origFilament, flexApplied && filamentRestorable);
       say(ok ? "Printer state restored." + parkNote()
              : "The printer did not confirm cleanup — CHECK IT DIRECTLY. The nozzle may still be hot." + parkNote(), ok ? "good" : "err");
     }
@@ -966,7 +995,8 @@ $("run").addEventListener("click", async () => {
     // filament type is only owed if this page actually sent the write.
     // s.tool, not a fresh settings() read: this run's commands and origFilament
     // both came from the snapshot taken when Run was clicked.
-    if (started) showRestore(true, origFilament, flexApplied, s.tool);
+    if (started) showRestore(true, filamentRestorable ? origFilament : origFilamentRaw,
+                             flexApplied, s.tool, filamentRestorable);
   }
 });
 
