@@ -1,0 +1,33 @@
+<!-- Preview only (build.py --preview). Reproduces what OrcaSlicer injects into a plugin window
+     (WebViewHostDialog::theme_user_script / element_defaults_user_script) from the app's live
+     colors (GUI_App, StateColor). Pick the theme with ?theme=dark. -->
+<script>
+(function () {
+  var dark = new URLSearchParams(location.search).get("theme") === "dark";
+  var vars = dark
+    ? "--orca-bg:#2b2b2b;--orca-fg:#fafafa;--orca-muted:#b2b3b5;--orca-border:#36363b;--orca-accent:#00675b;"
+    : "--orca-bg:#ffffff;--orca-fg:#363636;--orca-muted:#363636;--orca-border:#f1f1f1;--orca-accent:#009688;";
+  vars += "--orca-accent-fg:#ffffff;--orca-font:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;color-scheme:" +
+          (dark ? "dark" : "light") + ";";
+  document.write('<style id="orca-host-theme-vars">:root{' + vars + '}</style>');
+  document.documentElement.setAttribute("data-orca-theme", dark ? "dark" : "light");
+})();
+</script>
+<style id="orca-plugin-defaults">
+html,body{background:var(--orca-bg);color:var(--orca-fg);font-family:var(--orca-font);font-size:13px;}
+body{margin:0;}
+h1,h2,h3,h4,h5,h6{color:var(--orca-fg);font-weight:600;}
+a{color:var(--orca-accent);}
+hr{border:0;border-top:1px solid var(--orca-border);}
+button{font:inherit;color:var(--orca-accent-fg);background:var(--orca-accent);border:1px solid var(--orca-accent);border-radius:4px;padding:5px 14px;cursor:pointer;}
+button:hover{filter:brightness(1.1);}
+button:disabled{opacity:.5;cursor:default;}
+input,select,textarea{font:inherit;color:var(--orca-fg);background:var(--orca-bg);border:1px solid var(--orca-border);border-radius:4px;padding:4px 8px;}
+input:focus,select:focus,textarea:focus{outline:none;border-color:var(--orca-accent);}
+table{border-collapse:collapse;}
+th,td{text-align:left;padding:6px 10px;border-bottom:1px solid var(--orca-border);}
+th{color:var(--orca-muted);font-weight:600;}
+::-webkit-scrollbar{width:12px;height:12px;}
+::-webkit-scrollbar-thumb{background:var(--orca-border);border-radius:6px;}
+::-webkit-scrollbar-track{background:transparent;}
+</style>

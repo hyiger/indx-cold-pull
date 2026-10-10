@@ -1,0 +1,609 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>INDX Cold Pull</title>
+<style>
+  /* Everything is drawn from the theme OrcaSlicer injects (--orca-*) and from the palette of its
+     own web dialogs (resources/web/include/global.css, dialog/css/theme.css), so the window follows
+     the app's light/dark mode live. Dark mode is keyed on data-orca-theme, the host's signal;
+     prefers-color-scheme is deliberately not used, as in Orca's own dialogs. */
+  :root {
+    --accent: var(--orca-accent, #009688);
+    --text: var(--orca-fg, #363636);
+    --bg: var(--orca-bg, #FFFFFF);
+    /* Not --orca-border/--orca-muted: in light mode those are the row-highlight #F1F1F1 and the label
+       color itself, too faint for field borders and not muted at all. These are the borders and
+       secondary text of Orca's native controls. */
+    --line: #DBDBDB;
+    --muted: #6B6B6B;
+    --bg-alt: #F4F4F4;
+    --focus-box: #E5F0EE;
+    --btn-bg: #DFDFDF;
+    --btn-hover: #D4D4D4;
+    --btn-fg: #262E30;
+    --btn-fg-disabled: #6B6B6B;
+    --alert: #E14747;
+    --warn: #a15c00;
+    --warn-bg: rgba(199, 122, 22, 0.12);
+    --ok: #137333;
+    --ok-bg: rgba(19, 115, 51, 0.10);
+    --danger: #b42318;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  :root[data-orca-theme="dark"] {
+    --line: #4A4A51;
+    --muted: #B2B3B5;
+    --bg-alt: #36363B;
+    --focus-box: #283232;
+    --btn-bg: #3E3E45;
+    --btn-hover: #4D4D54;
+    --btn-fg: #EFEFF0;
+    --btn-fg-disabled: #818183;
+    --warn: #f0b45a;
+    --warn-bg: rgba(240, 180, 90, 0.14);
+    --ok: #37c871;
+    --ok-bg: rgba(55, 200, 113, 0.12);
+    --danger: #ff7b72;
+  }
+
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { background: var(--bg); color: var(--text); }
+  body {
+    margin: 0; font-family: var(--orca-font, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif);
+    font-size: 13px; line-height: 1.45; user-select: none; -webkit-user-select: none;
+  }
+  .page { padding: 16px 20px 20px; }
+
+  header { margin-bottom: 14px; }
+  .title { font-size: 15px; font-weight: 600; }
+  .sub { color: var(--muted); margin-top: 2px; }
+  .ctx { margin-top: 10px; padding: 7px 10px; border-radius: 4px; background: var(--bg-alt); color: var(--muted); }
+  .ctx b { color: var(--text); font-weight: 600; }
+  .ctx.warn { background: var(--warn-bg); color: var(--text); }
+
+  section { margin-top: 18px; }
+  .section-title { display: flex; align-items: center; gap: 8px; font-weight: 600; margin-bottom: 8px; }
+  .section-title::after { content: ""; flex: 1; border-top: 1px solid var(--line); }
+  .hint { color: var(--muted); font-size: 12px; margin: 6px 0 0; }
+
+  /* Checklist: Orca's checkbox (dialog/css/common.css) on the accent color. */
+  .checks { list-style: none; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: 4px; }
+  .checks li { padding: 8px 10px; border-top: 1px solid var(--line); }
+  .checks li:first-child { border-top: 0; }
+  .checks label { display: flex; gap: 8px; align-items: flex-start; cursor: pointer; }
+  .checks label > span > b { display: block; font-weight: 600; }
+  .checks .desc b { font-weight: 600; color: var(--text); }
+  .checks .desc { display: block; color: var(--muted); font-size: 12px; margin-top: 1px; }
+  .checks-intro { display: flex; gap: 8px; padding: 8px 10px; margin-bottom: 8px; border-radius: 4px;
+                  background: var(--warn-bg); }
+  .checks-intro .glyph { color: var(--warn); font-weight: 700; }
+  input[type="checkbox"] {
+    -webkit-appearance: none; appearance: none; flex: 0 0 auto;
+    width: 14px; height: 14px; margin: 2px 0 0; padding: 0;
+    border: 1px solid var(--line); border-radius: 2px; background: var(--bg);
+    display: inline-grid; place-content: center; cursor: pointer;
+  }
+  input[type="checkbox"]::before {
+    content: ""; width: 10px; height: 10px; transform: scale(0);
+    box-shadow: inset 1em 1em var(--orca-accent-fg, #FFFFFF);
+    clip-path: polygon(7% 37%, 0 45%, 33% 78%, 100% 30%, 95% 21%, 33% 64%);
+  }
+  input[type="checkbox"]:checked { background: var(--accent); border-color: var(--accent); }
+  input[type="checkbox"]:checked::before { transform: scale(1); }
+  input[type="checkbox"]:hover { border-color: var(--accent); }
+
+  /* Parameter rows, laid out like Orca's settings pages: label left, control, unit after. */
+  .params { display: grid; grid-template-columns: 150px 1fr; align-items: center; row-gap: 8px; }
+  .params > label { color: var(--text); }
+  .control { display: flex; align-items: center; gap: 6px; min-width: 0; }
+  .unit { color: var(--muted); }
+  input[type="number"], select {
+    font: inherit; color: var(--text); background: var(--bg); height: 26px;
+    border: 1px solid var(--line); border-radius: 4px; padding: 0 8px; outline: none;
+  }
+  input[type="number"] { width: 72px; -moz-appearance: textfield; }
+  input[type="number"]::-webkit-inner-spin-button, input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+  input:hover:not(:disabled), select:hover:not(:disabled) { border-color: var(--accent); }
+  input:focus, select:focus { border-color: var(--accent); background: var(--focus-box); }
+  input:disabled, select:disabled { color: var(--btn-fg-disabled); background: var(--bg-alt); cursor: default; }
+  .select { position: relative; display: inline-flex; min-width: 0; }
+  .select select { -webkit-appearance: none; appearance: none; padding-right: 26px; min-width: 72px; max-width: 100%;
+                   text-overflow: ellipsis; }
+  .select.wide { flex: 1; }
+  .select.wide select { width: 100%; }
+  .select::after {
+    content: ""; position: absolute; right: 10px; top: 50%; width: 5px; height: 5px; margin-top: -4px;
+    border-right: 1.5px solid var(--muted); border-bottom: 1.5px solid var(--muted);
+    transform: rotate(45deg); pointer-events: none;
+  }
+
+  /* Buttons: ButtonStyleConfirm / ButtonStyleRegular / ButtonStyleAlert from Orca's global.css. */
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+  button {
+    font: inherit; height: 28px; min-width: 74px; padding: 0 14px; border-radius: 4px; cursor: pointer;
+    border: 1px solid var(--accent); background: var(--accent); color: var(--orca-accent-fg, #FFFFFF);
+  }
+  button:hover:not(:disabled) { filter: brightness(1.1); }
+  button.regular, button.alert { border-color: var(--btn-bg); background: var(--btn-bg); color: var(--btn-fg); }
+  button.regular:hover:not(:disabled) { filter: none; background: var(--btn-hover); border-color: var(--btn-hover); }
+  button.alert:hover:not(:disabled) { filter: none; background: var(--alert); border-color: var(--alert); color: #FFFFFF; }
+  button:disabled { cursor: default; border-color: var(--btn-bg); background: var(--btn-bg); color: var(--btn-fg-disabled); }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  button.icon { min-width: 0; width: 26px; height: 26px; padding: 0; font-size: 14px; line-height: 1; }
+
+  .gate-msg { color: var(--muted); margin: 12px 0 0; min-height: 1em; }
+  .gate-msg:empty { display: none; }
+
+  #log {
+    margin-top: 12px; padding: 8px 10px; max-height: 220px; overflow: auto;
+    font-family: var(--mono); font-size: 12px; line-height: 1.5; white-space: pre-wrap;
+    background: var(--bg-alt); border: 1px solid var(--line); border-radius: 4px;
+    user-select: text; -webkit-user-select: text;
+  }
+  #log:empty { display: none; }
+  #log .stage { font-weight: 600; }
+  #log .err { color: var(--danger); }
+  #log .good { color: var(--ok); }
+
+  .restore { margin-top: 12px; padding: 10px 12px; border-radius: 4px; background: var(--ok-bg);
+             border-left: 3px solid var(--ok); }
+  .restore .head { font-weight: 600; margin-bottom: 4px; }
+  .restore ol { margin: 0; padding-left: 18px; }
+  .restore li { padding: 2px 0; }
+  .restore .note { color: var(--muted); font-size: 12px; }
+
+  details { margin-top: 18px; }
+  summary { cursor: pointer; font-weight: 600; }
+  summary::marker { color: var(--muted); }
+  table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+  td { padding: 5px 8px 5px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+  td:first-child { white-space: nowrap; color: var(--muted); }
+  code { font-family: var(--mono); font-size: 12px; padding: 0 3px; border-radius: 3px; background: var(--bg-alt); }
+  footer { margin-top: 16px; color: var(--muted); font-size: 12px; }
+  a { color: var(--accent); }
+
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb { background: var(--btn-bg); border-radius: 5px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--btn-hover); }
+  ::-webkit-scrollbar-track { background: transparent; }
+</style>
+</head>
+<body>
+<div class="page">
+  <header>
+    <div class="title">INDX Cold Pull</div>
+    <div class="sub">A guided cold pull for the Prusa CORE One INDX, to clear a partially clogged nozzle.
+      Prusa's built-in wizard (<code>M1702</code>) is not enabled for INDX.</div>
+    <div class="ctx" id="ctx" hidden></div>
+  </header>
+
+  <section>
+    <div class="section-title">Before you start, at the printer</div>
+    <div class="checks-intro"><span class="glyph">!</span>
+      <span>Most of these are menu-only settings that can neither be read nor set over G-code, and each
+      fails <em>silently</em>. The filament-type item is different: it is a change the procedure makes to
+      the printer's saved settings.</span></div>
+    <ul class="checks">
+      <li><label><input type="checkbox" class="gate-common">
+        <span><b>Filament Sensor → OFF</b>
+        <span class="desc">Otherwise the printer grabs and autoloads the filament while you are inserting it by hand.</span></span></label></li>
+      <li><label><input type="checkbox" class="gate-common" id="gate-ptfe">
+        <span><b>PTFE tube removed from this tool</b>
+        <span class="desc">The pulled plug travels up and out of the top port. With the tube fitted there is nowhere for it to go.</span></span></label></li>
+      <li><label><input type="checkbox" class="gate-common">
+        <span><b>Light-colored PLA on hand, and you will stay at the printer</b>
+        <span class="desc">PLA shows the extracted debris clearly. Do not load it yet: a prompt on the printer's screen says when to insert it. The procedure waits for knob presses at six points, and the heaters switch off after ~30 minutes unattended.</span></span></label></li>
+      <li><label><input type="checkbox" class="gate-common" id="gate-filament">
+        <span><b>This nozzle's filament type will be set to FLEX: note what it is now</b>
+        <span class="desc">Firmware 6.9.0 removed the Auto Retract switch on INDX, and the firmware skips auto retract only for flexible filaments, so the procedure marks this nozzle FLEX. That is a write to the printer's saved settings, and a power cycle does not undo it. USB Serial reads the current type and puts that exact value back, unless it is a name that cannot be sent over G-code, in which case it writes nothing and tells you what to set by hand. A G-code file cannot read anything, so <b>write down what Settings → Filament shows for this nozzle</b>, and set it back afterwards. This box clears whenever you change the nozzle, and “Save all” writes a file for every nozzle, so note all of them before running any.</span></span></label></li>
+      <li id="serial-prereq"><label><input type="checkbox" id="gate-serial">
+        <span><b>USB Serial only: “Serial Printing Screen” → OFF, then reboot</b>
+        <span class="desc">Settings → Hardware → Experimental Settings. Left on, a 5-second inactivity timeout runs the end-of-print sequence mid-procedure and crashes the printer with <code>E move without tool</code>. Not needed for a G-code file.</span></span></label></li>
+    </ul>
+  </section>
+
+  <section>
+    <div class="section-title">Settings</div>
+    <div class="params">
+      <label for="nozzle">Nozzle</label>
+      <div class="control"><span class="select"><select id="nozzle"></select></span></div>
+      <label for="flush">Flush temperature</label>
+      <div class="control"><input id="flush" type="number" min="200" max="290" step="5" value="290"><span class="unit">°C</span></div>
+      <label for="pull">Pull temperature</label>
+      <div class="control"><input id="pull" type="number" min="60" max="120" step="5" value="80"><span class="unit">°C</span></div>
+    </div>
+    <p class="hint">80 °C is the field-verified pull temperature; raise in 5–10 °C steps only if the plug will
+      not release. Flush is capped at 290 because the firmware clamps settable targets there. These are
+      INDX-frame values: its sensor sits 17 mm above the tip and reads high, so do not substitute numbers
+      from MK4 or XL guides.</p>
+  </section>
+
+  <section>
+    <div class="section-title">G-code file</div>
+    <div class="params">
+      <label for="dest">Save to</label>
+      <div class="control"><span class="select wide"><select id="dest"></select></span>
+        <button class="icon regular" id="dest-refresh" title="Refresh the list of drives">↻</button></div>
+    </div>
+    <div class="actions">
+      <button id="download" disabled>Save G-code</button>
+      <button id="download-all" class="regular" disabled>Save all nozzles (.zip)</button>
+    </div>
+    <p class="hint">Start the file from the printer like any other print. The USB-file route also gets the
+      firmware's warm end-of-print wipe.</p>
+  </section>
+
+  <section id="serial-section">
+    <div class="section-title">USB Serial</div>
+    <div class="params">
+      <label for="port">Printer port</label>
+      <div class="control"><span class="select wide"><select id="port"></select></span>
+        <button class="icon regular" id="port-refresh" title="Refresh the list of ports">↻</button></div>
+    </div>
+    <div class="actions">
+      <button id="run" disabled>Run over USB Serial</button>
+      <button id="cancel" class="regular" hidden>Cancel</button>
+      <button id="force" class="alert" hidden>Force stop</button>
+    </div>
+    <p class="hint" id="serial-note"></p>
+  </section>
+
+  <p class="gate-msg" id="gate-msg"></p>
+  <div id="log" aria-live="polite"></div>
+
+  <!-- Shown once a run finishes or a file is saved. The settings turned off above stay off until the
+       user puts them back, and a printer left that way misbehaves on the next ordinary print. -->
+  <div class="restore" id="restore" hidden>
+    <div class="head" id="restore-title">Before your next print, put these back</div>
+    <ol>
+      <li><b>Filament Sensor → ON</b><br>
+        <span class="note">Left off, the printer will not detect a runout or jam during normal printing.</span></li>
+      <li id="restore-filament" hidden><b id="restore-filhead"></b><br>
+        <span class="note" id="restore-filnote"></span></li>
+      <li><b>Refit the PTFE tube</b><br>
+        <span class="note">Printing without it will not feed reliably.</span></li>
+      <li id="restore-serial" hidden><b>“Serial Printing Screen” → back ON, if you want it</b><br>
+        <span class="note">Optional. Only affects the serial-print UI, not printing itself.</span></li>
+    </ol>
+  </div>
+
+  <details>
+    <summary>What the procedure does</summary>
+    <table>
+      <tr><td>Pick tool</td><td>Heating requires a latched tool, so the pick must come first.</td></tr>
+      <tr><td>Flush</td><td>~60 mm of PLA at the flush temperature to displace old material.</td></tr>
+      <tr><td>Pack</td><td>Small extrusions while cooling toward 180 °C, so the plug casts the nozzle interior.</td></tr>
+      <tr><td>Deep cool</td><td>Fan-assisted to 60 °C with a fixed dwell, so the plug grips the debris.</td></tr>
+      <tr><td>Pull</td><td>Reheat to the pull temperature in two stages to avoid overshoot, raise motor current, retract 80 mm hard.</td></tr>
+      <tr><td>Restore</td><td>Undo every session change: motor current, extrusion guard, stall detection and, over USB Serial, the filament type.</td></tr>
+      <tr><td>Wipe &amp; dock</td><td>Rewarm the nozzle so residue releases instead of dragging cold strings, then dock automatically. The USB-file route also gets the firmware's end-of-print wastebin wipe, warm.</td></tr>
+    </table>
+    <p class="hint">Prompts appear on the <b>printer's</b> screen and wait for a knob press, six in all:
+      confirm setup, <b>insert the PLA</b> (not before), start the purge (from here, watch the nozzle tip
+      for melted PLA flowing out), confirm what came out, start the pull, remove the strand. Success looks
+      like three thin strands with visible dark debris; repeat until the tip comes out clean.</p>
+  </details>
+
+  <footer>
+    Verified against Prusa-Firmware-Buddy <code>6.6.3+15625</code> and <code>6.9.0</code>. Use at your own
+    risk: this drives a hot nozzle and a high-current motor. ·
+    <a href="https://github.com/hyiger/indx-cold-pull">Source</a> ·
+    <a href="https://github.com/hyiger/PrusaSlicer/blob/master/doc/Cold_Pull_Guide.md">Full guide</a>
+  </footer>
+</div>
+
+<script>
+"use strict";
+/* The plugin owns the procedure and the log; this page renders them and collects input. It polls
+   the plugin through window.orca (injected by OrcaSlicer) so the run keeps going, and is picked up
+   again, if this window is closed and reopened. Gating and the put-it-back reminder follow
+   ../index.html. */
+const $ = (id) => document.getElementById(id);
+const logEl = $("log");
+const host = window.orca;
+
+const view = {
+  ready: false, epoch: -1, count: 0, running: false, wasRunning: false,
+  toolCount: 8, serialAvailable: false, serialReason: "", restoreKey: "",
+  context: null, contextKey: "", pendingContext: null, portIdentity: null, portSerials: {}, ackedRun: 0,
+  pollSentAt: 0,
+};
+
+function send(message) { if (host) host.postMessage(message); }
+function say(text, cls) { send({ cmd: "say", text, cls: cls || "", epoch: view.epoch, count: view.count }); }
+
+function settings() {
+  const nozzle = Math.min(view.toolCount, Math.max(1, parseInt($("nozzle").value, 10) || 1));
+  const flush = Math.min(290, Math.max(200, parseInt($("flush").value, 10) || 290));
+  const pull = Math.min(120, Math.max(60, parseInt($("pull").value, 10) || 80));
+  return { tool: nozzle - 1, nozzle, flush, pull };
+}
+
+/* ---------- Pre-flight gate ----------
+   The buttons stay disabled until each prerequisite is explicitly confirmed. "Serial Printing
+   Screen" only affects a serial session, so it gates the Run button alone. */
+const commonGates = [...document.querySelectorAll(".gate-common")];
+const serialGate = $("gate-serial");
+
+function updateGate() {
+  const commonOk = commonGates.every((c) => c.checked);
+  const remaining = commonGates.filter((c) => !c.checked).length;
+  const haveDest = $("dest").options.length > 0;
+  const port = $("port").value;
+  const portVerifiable = !port || !!view.portSerials[port];
+  const havePort = !!port && portVerifiable;
+  $("download").disabled = !commonOk || view.running || !haveDest;
+  $("download-all").disabled = !commonOk || view.running || !haveDest;
+  $("run").disabled = !commonOk || !serialGate.checked || !view.serialAvailable || !havePort || view.running;
+
+  let msg = "";
+  if (!commonOk) {
+    msg = `Confirm ${remaining} more item${remaining === 1 ? "" : "s"} above to continue.`;
+  } else if (view.serialAvailable && !serialGate.checked && !view.running) {
+    msg = "The G-code file is ready. Confirm the last item to enable USB Serial as well.";
+  } else if (view.serialAvailable && !portVerifiable && !view.running) {
+    msg = `${port} does not report a USB serial number, so USB Serial cannot verify the printer on it. Prusa printers report one; pick the printer's port.`;
+  }
+  $("gate-msg").textContent = msg;
+}
+[...commonGates, serialGate].forEach((c) => c.addEventListener("change", updateGate));
+
+// The PTFE tube and the filament-type note are about ONE nozzle, so a confirmation made for one says
+// nothing about another. Every path that changes the effective nozzle clears them.
+const nozzleGates = [$("gate-ptfe"), $("gate-filament")];
+function clearNozzleGates(reason) {
+  if (!nozzleGates.some((c) => c.checked)) return;
+  nozzleGates.forEach((c) => { c.checked = false; });
+  updateGate();
+  say(`${reason} Confirm the PTFE tube and filament-type items again: they were for the previous nozzle.`, "err");
+}
+$("nozzle").addEventListener("change", () => clearNozzleGates("Nozzle changed."));
+
+// The checklist is about one physical printer. A different port, or a different printer on the
+// same path (its USB serial number changed), may be a printer whose sensor, PTFE tube and filament
+// type nobody has checked, so every item clears. A port without a serial number is never run
+// (see updateGate), since a replacement on it cannot be told apart.
+function portSelectionChanged() {
+  const value = $("port").value;
+  const identity = value ? `${value}|${view.portSerials[value] || ""}` : "";
+  const previous = view.portIdentity;
+  view.portIdentity = identity;
+  if (previous === null || identity === previous) return;  // the first fill only populates the list
+  const gates = [...commonGates, serialGate];
+  if (!gates.some((c) => c.checked)) return;
+  gates.forEach((c) => { c.checked = false; });
+  updateGate();
+  const samePath = value && previous.split("|")[0] === value;
+  say(!value ? "The printer port is gone. Confirm the items above again once the printer is connected."
+    : samePath ? `A different printer is now on ${value}. Confirm the items above again for that printer.`
+    : `The printer port changed to ${value}. Confirm the items above again for the printer on that port.`, "err");
+}
+$("port").addEventListener("change", portSelectionChanged);
+
+/* ---------- Put-it-back reminder (showRestore() in index.html) ---------- */
+function showRestore(r) {
+  if (!r) { $("restore").hidden = true; return; }
+  const oneNozzle = Number.isInteger(r.tool);
+  const target = r.fil_name || "what it was";
+  $("restore-filament").hidden = !r.fil_changed;
+  $("restore-filhead").textContent = oneNozzle
+    ? `Nozzle ${r.tool + 1} filament type → back to ${target}`
+    : `Filament type of whichever nozzle you run a file for → back to ${target}`;
+  $("restore-filnote").textContent = !r.auto_restored
+    ? `"${target}" is not a name the plugin can send over G-code, so nothing was written back and the nozzle is still marked FLEX. Set it to "${target}" yourself under the printer's Filament menu. A power cycle does not undo it.`
+    : r.after_run
+    ? "Serial mode sends this itself at the end of a clean run. Verify it under the printer's Filament menu: a run that stopped early leaves the nozzle marked FLEX, and a power cycle does not undo that."
+    : `Each file marks its own nozzle FLEX to suppress auto retract and deliberately does not set it back: doing that before the last line would let the end-of-print sequence reheat to 215 °C and ram the melt zone you just cleared. Once a print has finished, set that nozzle back to the type you noted before starting: M865 S"<TYPE>" L${oneNozzle ? r.tool : "<n>"}, where <n> is the 0-based index of the nozzle the file was for. A power cycle does not undo it.`;
+  $("restore-title").textContent = r.after_run
+    ? "Before your next print, put these back"
+    : "After you have run the file, put these back";
+  $("restore-serial").hidden = !r.after_run;
+  $("restore").hidden = false;
+}
+
+/* ---------- Rendering plugin state ---------- */
+function appendLines(lines) {
+  for (const l of lines) {
+    const div = document.createElement("div");
+    if (l.cls) div.className = l.cls;
+    div.textContent = l.text;
+    logEl.appendChild(div);
+  }
+  if (lines.length) logEl.scrollTop = logEl.scrollHeight;
+}
+
+function setRunning(on, runSettings) {
+  view.running = on;
+  $("run").hidden = on;
+  $("cancel").hidden = !on;
+  $("force").hidden = !on;
+  // The run works from a snapshot taken when Run was pressed; show it and freeze the inputs.
+  if (on && runSettings) {
+    // A run started on another printer can use a nozzle the current list lacks; show it anyway.
+    for (let n = $("nozzle").options.length + 1; n <= runSettings.nozzle; n++) {
+      const option = document.createElement("option");
+      option.value = String(n); option.textContent = String(n);
+      $("nozzle").appendChild(option);
+    }
+    $("nozzle").value = String(runSettings.nozzle);
+    $("flush").value = runSettings.flush;
+    $("pull").value = runSettings.pull;
+  }
+  ["nozzle", "flush", "pull", "dest"].forEach((id) => { $(id).disabled = on; });
+  $("port").disabled = on || !view.serialAvailable;
+  updateGate();
+  // Rebuild the nozzle list from the current printer once a run ends: a change that waited for the
+  // run, or a list widened above to show the run's nozzle, must not outlive it.
+  if (!on && (view.pendingContext || view.context)) applyContext(view.pendingContext || view.context, true);
+}
+
+function applyState(st) {
+  if (st.full) logEl.textContent = "";
+  appendLines(st.lines);
+  view.epoch = st.epoch;
+  view.count = st.count;
+  if (st.running !== view.running) setRunning(st.running, st.run_settings);
+  const key = JSON.stringify(st.restore);
+  if (key !== view.restoreKey) {
+    view.restoreKey = key;
+    showRestore(st.restore);
+    if (st.restore && st.restore.after_run && view.wasRunning && !st.running)
+      $("restore").scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+  view.wasRunning = st.running;
+  // Tell the plugin once a finished run has been shown here, so it does not also post it as a
+  // notification when this window closes. Sent after rendering, never before.
+  if (!st.running && st.run_id && st.run_id !== view.ackedRun) {
+    view.ackedRun = st.run_id;
+    send({ cmd: "ack", run_id: st.run_id });
+  }
+}
+
+function fillSelect(select, items, valueOf, labelOf, prefer) {
+  const previous = select.value;
+  select.textContent = "";
+  for (const item of items) {
+    const option = document.createElement("option");
+    option.value = valueOf(item);
+    option.textContent = labelOf(item);
+    select.appendChild(option);
+  }
+  const values = items.map(valueOf);
+  if (values.includes(previous)) select.value = previous;
+  else if (prefer) { const p = items.find(prefer); if (p) select.value = valueOf(p); }
+}
+
+function applyPorts(ports) {
+  view.portSerials = Object.fromEntries(ports.map((p) => [p.device, p.serial || ""]));
+  fillSelect($("port"), ports, (p) => p.device, (p) => p.label, (p) => p.prusa);
+  if (!ports.length) {
+    const option = document.createElement("option");
+    option.value = ""; option.textContent = "No serial ports found. Connect the printer over USB.";
+    $("port").appendChild(option);
+  }
+  // A refresh that lost the selected port picks another one; that counts as a change too.
+  portSelectionChanged();
+  updateGate();
+}
+
+function applyDestinations(dests) {
+  fillSelect($("dest"), dests, (d) => d.id, (d) => d.kind === "drive" ? `${d.label} (drive)` : d.label,
+             (d) => d.kind === "drive");
+  updateGate();
+}
+
+function applyContext(ctx, force) {
+  const key = JSON.stringify(ctx);
+  if (key === view.contextKey && !force) return;
+  // A run works from the snapshot taken when Run was pressed; apply a printer change after it.
+  if (view.running) { view.pendingContext = ctx; return; }
+  const previous = view.context;
+  view.context = ctx;
+  view.contextKey = key;
+  view.pendingContext = null;
+  view.toolCount = ctx.tool_count;
+  const before = parseInt($("nozzle").value, 10) || 1;
+  $("nozzle").textContent = "";
+  for (let n = 1; n <= ctx.tool_count; n++) {
+    const option = document.createElement("option");
+    option.value = String(n); option.textContent = String(n);
+    $("nozzle").appendChild(option);
+  }
+  const after = Math.min(before, ctx.tool_count);
+  $("nozzle").value = String(after);
+  // Same rule as picking another nozzle by hand: a different printer means a different physical
+  // nozzle even when its number is unchanged, and a moved selection is a different nozzle. Not on
+  // the first context, which only fills the list.
+  const printerChanged = previous !== null &&
+    (previous.printer_name !== ctx.printer_name || previous.tool_count !== ctx.tool_count);
+  const name = ctx.printer_name || "another printer";
+  if (printerChanged && after !== before) {
+    clearNozzleGates(`The printer selected in OrcaSlicer changed to ${name}, which has ${ctx.tool_count} nozzles, so the selection moved from nozzle ${before} to ${after}.`);
+  } else if (printerChanged) {
+    clearNozzleGates(`The printer selected in OrcaSlicer changed to ${name}.`);
+  } else if (after !== before) {
+    clearNozzleGates(`${name} has ${ctx.tool_count} nozzles, so the selection moved from nozzle ${before} to ${after}.`);
+  }
+  $("download-all").textContent = `Save all ${ctx.tool_count} nozzles (.zip)`;
+  const el = $("ctx");
+  el.hidden = false;
+  el.classList.toggle("warn", !ctx.is_indx);
+  el.textContent = "";
+  if (ctx.is_indx) {
+    el.append("Printer in OrcaSlicer: ");
+    const b = document.createElement("b"); b.textContent = ctx.printer_name; el.append(b);
+    el.append(` · ${ctx.tool_count} nozzles`);
+  } else {
+    el.textContent = ctx.note || (ctx.printer_name
+      ? `The printer selected in OrcaSlicer, ${ctx.printer_name}, is not a CORE One INDX. This procedure is INDX-only: the file refuses to run anywhere else, and USB Serial checks the printer's model before sending anything.`
+      : "No printer is selected in OrcaSlicer. This procedure is for the CORE One INDX only.");
+  }
+}
+
+function applySerial(serial) {
+  view.serialAvailable = serial.available;
+  $("serial-prereq").hidden = !serial.available;
+  $("port").disabled = !serial.available || view.running;
+  $("port-refresh").disabled = !serial.available;
+  $("serial-note").textContent = serial.available
+    ? "Drives the printer directly from OrcaSlicer and shows progress here. Closing this window does not stop a run; open INDX Cold Pull again to follow it."
+    : `USB Serial is unavailable: ${serial.reason}. Use a G-code file instead: same procedure, and the USB-file route even adds the firmware's warm end-of-print wipe.`;
+  updateGate();
+}
+
+if (host) {
+  host.onMessage((m) => {
+    if (!m) return;
+    switch (m.type) {
+      case "init":
+        view.ready = true;
+        applyContext(m.context);
+        applySerial(m.serial);
+        applyPorts(m.ports);
+        applyDestinations(m.destinations);
+        applyState(m.state);
+        break;
+      case "state":
+        view.pollSentAt = 0;
+        applyState(m.state);
+        if (m.context) applyContext(m.context);
+        break;
+      case "ports": applyPorts(m.ports); break;
+      case "destinations": applyDestinations(m.destinations); break;
+      case "context": applyContext(m.context); break;
+      case "error": appendLines([{ text: `Plugin error: ${m.message}`, cls: "err" }]); break;
+    }
+  });
+} else {
+  appendLines([{ text: "This page must be opened by the INDX Cold Pull plugin inside OrcaSlicer.", cls: "err" }]);
+}
+
+const withView = (m) => Object.assign(m, { epoch: view.epoch, count: view.count });
+$("download").addEventListener("click", () => send(withView({ cmd: "save", all: false, ...settings(), dest: $("dest").value })));
+$("download-all").addEventListener("click", () => send(withView({ cmd: "save", all: true, ...settings(), dest: $("dest").value })));
+$("run").addEventListener("click", () => {
+  if (view.running) return;
+  const port = $("port").value;
+  send(withView({ cmd: "run", ...settings(), port, serial: view.portSerials[port] || "" }));
+});
+$("cancel").addEventListener("click", () => send(withView({ cmd: "cancel" })));
+$("force").addEventListener("click", () => send(withView({ cmd: "force" })));
+$("port-refresh").addEventListener("click", () => send({ cmd: "ports" }));
+$("dest-refresh").addEventListener("click", () => send({ cmd: "destinations" }));
+
+// A post() made while the page is still loading can be dropped, so ask until the plugin answers,
+// then poll. A poll whose reply never came is re-sent after a second rather than waited on forever.
+setInterval(() => {
+  if (!view.ready) { send({ cmd: "hello" }); return; }
+  const now = Date.now();
+  if (view.pollSentAt && now - view.pollSentAt < 1000) return;
+  view.pollSentAt = now;
+  send({ cmd: "poll", epoch: view.epoch, count: view.count });
+}, 400);
+send({ cmd: "hello" });
+updateGate();
+</script>
+</body>
+</html>

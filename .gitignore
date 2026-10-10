@@ -1,2 +1,6 @@
 .DS_Store
 node_modules/
+
+# OrcaSlicer plugin build output
+orca-plugin/dist/
+__pycache__/
