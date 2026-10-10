@@ -307,7 +307,7 @@ const host = window.orca;
 const view = {
   ready: false, epoch: -1, count: 0, running: false, wasRunning: false,
   toolCount: 8, serialAvailable: false, serialReason: "", restoreKey: "",
-  contextKey: "", pendingContext: null, pollSentAt: 0,
+  context: null, contextKey: "", pendingContext: null, pollSentAt: 0,
 };
 
 function send(message) { if (host) host.postMessage(message); }
@@ -453,6 +453,8 @@ function applyContext(ctx) {
   if (key === view.contextKey) return;
   // A run works from the snapshot taken when Run was pressed; apply a printer change after it.
   if (view.running) { view.pendingContext = ctx; return; }
+  const previous = view.context;
+  view.context = ctx;
   view.contextKey = key;
   view.pendingContext = null;
   view.toolCount = ctx.tool_count;
@@ -465,11 +467,18 @@ function applyContext(ctx) {
   }
   const after = Math.min(before, ctx.tool_count);
   $("nozzle").value = String(after);
-  // Same rule as picking another nozzle by hand: the filament-type note was for the old one.
-  if (after !== before && $("gate-filament").checked) {
+  // Same rule as picking another nozzle by hand: a different printer means a different physical
+  // nozzle, even when its number is unchanged, so the filament-type note no longer applies. Not on
+  // the first context, which only fills the list.
+  const printerChanged = previous !== null &&
+    (previous.printer_name !== ctx.printer_name || previous.tool_count !== ctx.tool_count);
+  if (printerChanged && $("gate-filament").checked) {
     $("gate-filament").checked = false;
     updateGate();
-    say(`The printer selected in OrcaSlicer has ${ctx.tool_count} nozzles, so the selection moved from nozzle ${before} to ${after}. Confirm the filament-type item again for nozzle ${after}.`, "err");
+    const name = ctx.printer_name || "another printer";
+    say(after !== before
+      ? `The printer selected in OrcaSlicer changed to ${name}, which has ${ctx.tool_count} nozzles, so the selection moved from nozzle ${before} to ${after}. Confirm the filament-type item again for nozzle ${after}.`
+      : `The printer selected in OrcaSlicer changed to ${name}. Confirm the filament-type item again: the note you made was for a nozzle on the previous printer.`, "err");
   }
   $("download-all").textContent = `Save all ${ctx.tool_count} nozzles (.zip)`;
   const el = $("ctx");

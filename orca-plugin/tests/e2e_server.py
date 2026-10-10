@@ -9,7 +9,7 @@ that acts like Buddy firmware: M0 waits for a knob press and sends busy keepaliv
   POST /msg     a page message; returns the replies the plugin posted
   POST /knob    press the knob on the simulated printer
   POST /reset   reset the simulated printer after an M112
-  POST /printer?model=4t|8t|mk4   change the printer selected in the fake OrcaSlicer
+  POST /printer?model=4t|8t|8tcopy|mk4   change the printer selected in the fake OrcaSlicer
   GET  /sent    every command the printer has received
 """
 import argparse
@@ -171,7 +171,8 @@ def main():
                 printer.reset()
                 return self._send(200, "{}")
             if self.path.startswith("/printer?model="):
-                presets = {"4t": glue.INDX_4T, "8t": glue.INDX_8T, "mk4": glue.MK4}
+                copy = glue.FakePreset("Prusa CORE One INDX 8T HF 0.4 nozzle - Copy", glue.INDX_8T._config)
+                presets = {"4t": glue.INDX_4T, "8t": glue.INDX_8T, "8tcopy": copy, "mk4": glue.MK4}
                 orca.preset = presets[self.path.split("=", 1)[1]]
                 return self._send(200, "{}")
             return self._send(404, "{}")
