@@ -307,7 +307,7 @@ const host = window.orca;
 const view = {
   ready: false, epoch: -1, count: 0, running: false, wasRunning: false,
   toolCount: 8, serialAvailable: false, serialReason: "", restoreKey: "",
-  pollSentAt: 0,
+  contextKey: "", pendingContext: null, pollSentAt: 0,
 };
 
 function send(message) { if (host) host.postMessage(message); }
@@ -399,6 +399,7 @@ function setRunning(on, runSettings) {
   ["nozzle", "flush", "pull", "dest"].forEach((id) => { $(id).disabled = on; });
   $("port").disabled = on || !view.serialAvailable;
   updateGate();
+  if (!on && view.pendingContext) applyContext(view.pendingContext);
 }
 
 function applyState(st) {
@@ -448,15 +449,28 @@ function applyDestinations(dests) {
 }
 
 function applyContext(ctx) {
+  const key = JSON.stringify(ctx);
+  if (key === view.contextKey) return;
+  // A run works from the snapshot taken when Run was pressed; apply a printer change after it.
+  if (view.running) { view.pendingContext = ctx; return; }
+  view.contextKey = key;
+  view.pendingContext = null;
   view.toolCount = ctx.tool_count;
-  const current = parseInt($("nozzle").value, 10) || 1;
+  const before = parseInt($("nozzle").value, 10) || 1;
   $("nozzle").textContent = "";
   for (let n = 1; n <= ctx.tool_count; n++) {
     const option = document.createElement("option");
     option.value = String(n); option.textContent = String(n);
     $("nozzle").appendChild(option);
   }
-  $("nozzle").value = String(Math.min(current, ctx.tool_count));
+  const after = Math.min(before, ctx.tool_count);
+  $("nozzle").value = String(after);
+  // Same rule as picking another nozzle by hand: the filament-type note was for the old one.
+  if (after !== before && $("gate-filament").checked) {
+    $("gate-filament").checked = false;
+    updateGate();
+    say(`The printer selected in OrcaSlicer has ${ctx.tool_count} nozzles, so the selection moved from nozzle ${before} to ${after}. Confirm the filament-type item again for nozzle ${after}.`, "err");
+  }
   $("download-all").textContent = `Save all ${ctx.tool_count} nozzles (.zip)`;
   const el = $("ctx");
   el.hidden = false;
@@ -496,7 +510,11 @@ if (host) {
         applyDestinations(m.destinations);
         applyState(m.state);
         break;
-      case "state": view.pollSentAt = 0; applyState(m.state); break;
+      case "state":
+        view.pollSentAt = 0;
+        applyState(m.state);
+        if (m.context) applyContext(m.context);
+        break;
       case "ports": applyPorts(m.ports); break;
       case "destinations": applyDestinations(m.destinations); break;
       case "context": applyContext(m.context); break;

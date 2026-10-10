@@ -105,12 +105,6 @@ class IndxColdPull(orca.script.ScriptPluginCapabilityBase):
         self.window = None
         self.session.shutdown(timeout=3.0)
 
-    def on_lifecycle_event(self, event, ctx):
-        # A different printer selected while the window is open changes the tool count.
-        if event == orca.LifecycleEvent.PresetSelected and ctx.msg == "printer" and self.window is not None:
-            if self.window.is_open():
-                self.window.post({"type": "context", "context": _printer_context()})
-
     # ---- window ----
 
     def _open_window(self):
@@ -141,7 +135,25 @@ class IndxColdPull(orca.script.ScriptPluginCapabilityBase):
             window.post(reply)
 
     def _state(self, message):
-        return {"type": "state", "state": self.session.snapshot(message.get("epoch", -1), message.get("count", 0))}
+        # The printer context rides along with every poll, so the page follows a printer change
+        # in OrcaSlicer however it happens, without depending on a particular notification.
+        return {"type": "state", "state": self.session.snapshot(message.get("epoch", -1), message.get("count", 0)),
+                "context": _printer_context()}
+
+    @staticmethod
+    def _requested_settings(message, context):
+        """The settings to act on, or (None, reason) when the page asked for a nozzle the selected
+        printer does not have. Never clamped: the filament-type confirmation belongs to the nozzle
+        the user picked, so quietly moving to another one could mark an unconfirmed nozzle FLEX."""
+        try:
+            nozzle = int(message.get("nozzle"))
+        except (TypeError, ValueError):
+            nozzle = 0
+        count = context["tool_count"]
+        if not 1 <= nozzle <= count:
+            return None, (f"nozzle {message.get('nozzle')} is not on the printer selected in OrcaSlicer, which has "
+                          f"{count} nozzles. Pick the nozzle again and confirm its filament type.")
+        return clamp_settings(nozzle, message.get("flush"), message.get("pull"), count), None
 
     def _dispatch(self, message):
         command = message.get("cmd")
@@ -182,8 +194,12 @@ class IndxColdPull(orca.script.ScriptPluginCapabilityBase):
         if self.session.running:
             self.session.say("A serial run is in progress; save the file once it has finished.", "err")
             return
-        tool_count = _printer_context()["tool_count"]
-        s = clamp_settings(message.get("nozzle"), message.get("flush"), message.get("pull"), tool_count)
+        context = _printer_context()
+        tool_count = context["tool_count"]
+        s, refused = self._requested_settings(message, context)
+        if s is None:
+            self.session.say(f"Not saved: {refused}", "err")
+            return
         # Only a folder the plugin itself offered: the page names a destination, never a path.
         dest = {d["id"]: d for d in list_destinations()}.get(message.get("dest"))
         if dest is None:
@@ -220,8 +236,10 @@ class IndxColdPull(orca.script.ScriptPluginCapabilityBase):
     def _start(self, message):
         if self.session.running:
             return
-        s = clamp_settings(message.get("nozzle"), message.get("flush"), message.get("pull"),
-                           _printer_context()["tool_count"])
+        s, refused = self._requested_settings(message, _printer_context())
+        if s is None:
+            self.session.say(f"Not started: {refused}", "err")
+            return
         device = message.get("port") or ""
         self.session.begin_attempt(s)
         available, reason = _serial_status()

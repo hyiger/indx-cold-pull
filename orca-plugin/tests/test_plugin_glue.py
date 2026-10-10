@@ -77,8 +77,8 @@ def fake_orca(preset):
     orca.plugin = lambda cls: cls
     orca.register_capability = orca.registered.append
     orca.ExecutionResult = ExecutionResult
-    orca.LifecycleEvent = types.SimpleNamespace(PresetSelected="PresetSelected")
-    bundle = types.SimpleNamespace(current_printer_preset=lambda: preset)
+    orca.preset = preset  # tests switch it to change the printer selected in OrcaSlicer
+    bundle = types.SimpleNamespace(current_printer_preset=lambda: orca.preset)
     levels = types.SimpleNamespace(RegularNotificationLevel="regular", WarningNotificationLevel="warning")
     orca.host = types.SimpleNamespace(
         preset_bundle=lambda: bundle,
@@ -210,6 +210,26 @@ class PluginGlue(unittest.TestCase):
         self.assertFalse(capability.session.running)
         self.assertEqual(port.sent[-7:], module.cleanup_commands(0, "PETG", True))
         self.assertEqual(orca.notifications, [])
+
+    def test_poll_follows_a_printer_change(self):
+        _, orca, _, window = self.load(preset=INDX_8T)
+        self.assertEqual(window.ask(cmd="hello")["context"]["tool_count"], 8)
+        orca.preset = INDX_4T
+        self.assertEqual(window.ask(cmd="poll", epoch=-1, count=0)["context"]["tool_count"], 4)
+
+    def test_nozzle_off_the_selected_printer_is_refused_not_clamped(self):
+        opened = []
+        module, orca, capability, window = self.load(preset=INDX_8T, port_factory=lambda: opened.append(1))
+        orca.preset = INDX_4T  # the user switched printers after picking nozzle 8 on the 8T
+        with tempfile.TemporaryDirectory() as folder:
+            module.list_destinations = lambda: [{"id": folder, "label": "PRUSA", "kind": "drive"}]
+            state = window.ask(cmd="save", all=False, nozzle=8, flush=290, pull=80, dest=folder)["state"]
+            self.assertEqual(os.listdir(folder), [])
+            self.assertTrue(state["lines"][-1]["text"].startswith("Not saved: nozzle 8 is not on the printer"))
+        state = window.ask(cmd="run", nozzle=8, flush=290, pull=80, port="/dev/cu.usbmodem1101")["state"]
+        self.assertEqual(opened, [])
+        self.assertFalse(capability.session.running)
+        self.assertTrue(state["lines"][-1]["text"].startswith("Not started: nozzle 8 is not on the printer"))
 
     def test_declined_port_permission_is_reported(self):
         def denied():
