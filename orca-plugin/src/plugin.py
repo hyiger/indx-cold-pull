@@ -277,14 +277,16 @@ class IndxColdPull(orca.script.ScriptPluginCapabilityBase):
             return
         self.session.start_run(port, s)
 
-    def _on_run_finished(self, outcome, restore):
+    def _on_run_finished(self, outcome, restore, reason=None):
         # Worker thread. With the window open the page shows the result itself; closed, say it.
         if self.unloading or (self.window is not None and self.window.is_open()):
             return
         tool = restore["tool"]
         headline = {"completed": "INDX cold pull complete.", "canceled": "INDX cold pull canceled.",
                     "force-stopped": "INDX cold pull force-stopped: reset the printer before continuing.",
-                    "rejected": "INDX cold pull refused: the port is not an INDX."}.get(outcome, "INDX cold pull failed.")
+                    "rejected": (f"INDX cold pull refused: {reason}" if reason else
+                                 "INDX cold pull did not start. Open INDX Cold Pull for the reason.")
+                    }.get(outcome, "INDX cold pull failed.")
         owed = "Before your next print: Filament Sensor on, PTFE tube refitted"
         if restore["fil_changed"]:
             if not restore["auto_restored"]:

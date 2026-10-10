@@ -396,6 +396,7 @@ class ColdPullSession:
         self._on_finish = on_finish
         self.timeout_scale = timeout_scale
         self.last_outcome = None
+        self.last_reason = None  # why a "rejected" run did not start
 
     # ---- log and state, shared with the UI thread ----
 
@@ -442,6 +443,7 @@ class ColdPullSession:
         with self._lock:
             self._run_settings = dict(settings)
             self.last_outcome = None
+            self.last_reason = None
 
     def fail_attempt(self, settings, message):
         """The port never opened. The settings the user changed at the printer are still owed back,
@@ -554,6 +556,7 @@ class ColdPullSession:
     def _run(self, link, s):
         tool, nozzle = s["tool"], s["nozzle"]
         outcome = "completed"
+        reason = None
         confirmed_indx = False
         tool_picked = False
         orig_filament = "PLA"
@@ -573,7 +576,8 @@ class ColdPullSession:
             match = re.search(r"MACHINE_TYPE:(\S+)", " ".join(info))
             model = match.group(1) if match else ""
             if not re.search("INDX", model, re.IGNORECASE):
-                self.say(f'Refusing to continue: this port reports "{model or "an unknown model"}", not an INDX.', "err")
+                reason = f'this port reports "{model or "an unknown model"}", not an INDX.'
+                self.say(f"Refusing to continue: {reason}", "err")
                 self.say("Nothing was sent. Pick the INDX's port, or use the G-code file.", "err")
                 outcome = "rejected"
                 return
@@ -689,12 +693,13 @@ class ColdPullSession:
             link.close()
             with self._lock:
                 self.last_outcome = outcome
+                self.last_reason = reason
             # Owed on every exit; the filament row only when the FLEX write was dispatched.
             self.set_restore(True, orig_filament if filament_restorable else orig_filament_raw,
                              flex_applied, tool, filament_restorable)
             if self._on_finish is not None:
                 try:
-                    self._on_finish(outcome, self._restore)
+                    self._on_finish(outcome, self._restore, reason)
                 except Exception as error:
                     print(f"INDX Cold Pull: on_finish failed: {error}", file=sys.stderr)
 

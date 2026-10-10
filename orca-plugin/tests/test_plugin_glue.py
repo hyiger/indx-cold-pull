@@ -203,6 +203,23 @@ class PluginGlue(unittest.TestCase):
         self.assertEqual(orca.notifications[-1][0], "warning")
         self.assertIn("force-stopped", orca.notifications[-1][1])
 
+    def test_refusal_notification_names_the_actual_reason(self):
+        def slow_identify(line, _port):
+            if line == "M115":
+                time.sleep(0.3)  # long enough to close the window before the gate decides
+
+        port = printer(hook=slow_identify, disabled_docks=(0,))
+        _, orca, capability, window = self.load(port_factory=lambda: port)
+        window.ask(cmd="run", nozzle=1, flush=290, pull=80, port="/dev/cu.usbmodem1101", serial="CZPX0001")
+        window.close()
+        capability.session.join(5)
+        self.assertEqual(capability.session.last_outcome, "rejected")
+        self.assertEqual(capability.session.last_reason, "nozzle 1's dock is not enabled on this printer.")
+        self.assertEqual(orca.notifications[-1][0], "warning")
+        self.assertTrue(orca.notifications[-1][1].startswith(
+            "INDX cold pull refused: nozzle 1's dock is not enabled on this printer."))
+        self.assertNotIn("not an INDX", orca.notifications[-1][1])
+
     def test_unload_mid_run_queues_cleanup_and_stays_quiet(self):
         port = printer(hang_on="M109 S290")
         module, orca, capability, window = self.load(port_factory=lambda: port)
