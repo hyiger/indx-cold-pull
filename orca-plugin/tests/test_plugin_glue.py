@@ -240,6 +240,17 @@ class PluginGlue(unittest.TestCase):
         window.close()
         self.assertEqual(orca.notifications, [])
 
+    def test_result_shown_by_a_reopened_window_is_not_notified_again(self):
+        port = printer(hook=lambda line, _port: time.sleep(0.2) if line == "M115" else None)
+        _, orca, capability, window = self.load(port_factory=lambda: port)
+        window.ask(cmd="run", nozzle=1, flush=290, pull=80, port="/dev/cu.usbmodem1101", serial="CZPX0001")
+        capability.session.join(5)  # finishes between polls
+        capability.execute()        # reopening replaces the old window without a poll
+        reopened = orca.windows[-1]
+        self.assertFalse(reopened.ask(cmd="hello")["state"]["running"])
+        reopened.close()
+        self.assertEqual(orca.notifications, [])
+
     def test_unload_mid_run_queues_cleanup_and_stays_quiet(self):
         port = printer(hang_on="M109 S290")
         module, orca, capability, window = self.load(port_factory=lambda: port)

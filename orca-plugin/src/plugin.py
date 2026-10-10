@@ -148,14 +148,20 @@ class IndxColdPull(orca.script.ScriptPluginCapabilityBase):
         if reply is not None and window is not None and window.is_open():
             window.post(reply)
 
+    def _snapshot(self, epoch=-1, count=0):
+        """The session state for a reply to the page. Any reply showing the run finished delivers its
+        result, so the pending notification for it is dropped."""
+        snapshot = self.session.snapshot(epoch, count)
+        if not snapshot["running"]:
+            with self._result_lock:
+                self._pending_result = None
+        return snapshot
+
     def _state(self, message):
         # The printer context rides along with every poll, so the page follows a printer change
         # in OrcaSlicer however it happens, without depending on a particular notification.
-        snapshot = self.session.snapshot(message.get("epoch", -1), message.get("count", 0))
-        if not snapshot["running"]:
-            with self._result_lock:
-                self._pending_result = None  # this reply carries the finished run to the page
-        return {"type": "state", "state": snapshot, "context": _printer_context()}
+        return {"type": "state", "state": self._snapshot(message.get("epoch", -1), message.get("count", 0)),
+                "context": _printer_context()}
 
     @staticmethod
     def _requested_settings(message, context):
@@ -179,7 +185,7 @@ class IndxColdPull(orca.script.ScriptPluginCapabilityBase):
             return {"type": "init", "context": _printer_context(),
                     "serial": {"available": available, "reason": reason},
                     "ports": _list_ports(), "destinations": list_destinations(),
-                    "state": self.session.snapshot()}
+                    "state": self._snapshot()}
         if command == "poll":
             return self._state(message)
         if command == "ports":
