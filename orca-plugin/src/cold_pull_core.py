@@ -397,6 +397,7 @@ class ColdPullSession:
         self.timeout_scale = timeout_scale
         self.last_outcome = None
         self.last_reason = None  # why a "rejected" run did not start
+        self._ending = False     # the procedure is over; the thread is only wrapping up
 
     # ---- log and state, shared with the UI thread ----
 
@@ -423,6 +424,13 @@ class ColdPullSession:
         thread = self._thread
         return thread is not None and thread.is_alive()
 
+    @property
+    def procedure_active(self):
+        """True while the procedure itself is still executing. Unlike `running`, it turns false at
+        the first step of wrapping up, before the port is closed and on_finish reports the result."""
+        with self._lock:
+            return self.running and not self._ending
+
     def snapshot(self, epoch=-1, count=0):
         """Log lines the page has not seen, plus the run state and the reminder."""
         with self._lock:
@@ -444,6 +452,7 @@ class ColdPullSession:
             self._run_settings = dict(settings)
             self.last_outcome = None
             self.last_reason = None
+            self._ending = False
 
     def fail_attempt(self, settings, message):
         """The port never opened. The settings the user changed at the printer are still owed back,
@@ -690,6 +699,8 @@ class ColdPullSession:
                     self.say("The printer did not confirm cleanup. CHECK IT DIRECTLY. The nozzle may still be hot."
                              + park_note(), "err")
         finally:
+            with self._lock:
+                self._ending = True  # first, so nothing reads this run as still in progress
             link.close()
             with self._lock:
                 self.last_outcome = outcome

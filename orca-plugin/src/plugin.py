@@ -92,7 +92,6 @@ class IndxColdPull(orca.script.ScriptPluginCapabilityBase):
         # close on the UI thread.
         self._result_lock = threading.Lock()
         self._pending_result = None
-        self._run_ended = False  # set once the run reports its end; on_close stops saying "running"
         self.session = ColdPullSession(on_finish=self._on_run_finished)
 
     def get_name(self):
@@ -127,12 +126,11 @@ class IndxColdPull(orca.script.ScriptPluginCapabilityBase):
                     return
                 self.window = None
                 undelivered, self._pending_result = self._pending_result, None
-                ended = self._run_ended
             if self.unloading:
                 return
             if undelivered is not None:
                 self._notify_result(*undelivered)
-            elif self.session.running and not ended:  # an ending run notifies for itself
+            elif self.session.procedure_active:  # a run that is wrapping up notifies for itself
                 _notify("INDX cold pull is still running. Open INDX Cold Pull again from the Plugins "
                         "dialog or the Speed Dial to follow it or cancel it.", warning=False)
 
@@ -299,8 +297,6 @@ class IndxColdPull(orca.script.ScriptPluginCapabilityBase):
             else:
                 self.session.fail_attempt(s, str(error))
             return
-        with self._result_lock:
-            self._run_ended = False
         self.session.start_run(port, s)
 
     def _on_run_finished(self, outcome, restore, reason=None):
@@ -308,12 +304,10 @@ class IndxColdPull(orca.script.ScriptPluginCapabilityBase):
         # result at its next poll, unless the window closes first; closed, say it now.
         if self.unloading:
             return
-        with self._result_lock:
-            self._run_ended = True
         # Ask the host first and only compare in Python under the lock, so no host call is ever
         # made while holding it. A close that lands in between clears self.window under the same
         # lock, so the identity check sends the result to a notification instead, and on_close
-        # (seeing the run ended) does not also say it is still running.
+        # (seeing the procedure over) does not also say it is still running.
         window = self.window
         open_now = window is not None and window.is_open()
         with self._result_lock:

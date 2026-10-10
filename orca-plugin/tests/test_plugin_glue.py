@@ -282,6 +282,21 @@ class PluginGlue(unittest.TestCase):
         self.assertEqual(len(orca.notifications), 1, orca.notifications)
         self.assertTrue(orca.notifications[0][1].startswith("INDX cold pull complete."))
 
+    def test_close_while_the_run_wraps_up_gives_one_notification(self):
+        port = printer(hook=lambda line, _port: time.sleep(0.2) if line == "M115" else None)
+        _, orca, capability, window = self.load(port_factory=lambda: port)
+        release = port.close
+
+        def close_window_then_port():
+            window.close()  # the user closes after the last command, before on_finish
+            release()
+
+        port.close = close_window_then_port
+        window.ask(cmd="run", nozzle=1, flush=290, pull=80, port="/dev/cu.usbmodem1101", serial="CZPX0001")
+        capability.session.join(5)
+        self.assertEqual(len(orca.notifications), 1, orca.notifications)
+        self.assertTrue(orca.notifications[0][1].startswith("INDX cold pull complete."))
+
     def test_unload_mid_run_queues_cleanup_and_stays_quiet(self):
         port = printer(hang_on="M109 S290")
         module, orca, capability, window = self.load(port_factory=lambda: port)
