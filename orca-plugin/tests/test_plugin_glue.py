@@ -7,6 +7,7 @@ import importlib.util
 import os
 import sys
 import tempfile
+import threading
 import time
 import types
 import unittest
@@ -263,6 +264,23 @@ class PluginGlue(unittest.TestCase):
         self.assertNotIn(True, held)
         window.close()
         self.assertTrue(orca.notifications[-1][1].startswith("INDX cold pull complete."))
+
+    def test_close_in_the_last_moment_of_a_run_gives_one_notification(self):
+        port = printer(hook=lambda line, _port: time.sleep(0.2) if line == "M115" else None)
+        _, orca, capability, window = self.load(port_factory=lambda: port)
+        original = window.is_open
+
+        def is_open_then_user_closes():
+            answer = original()
+            if threading.current_thread().name == "indx-cold-pull" and answer:
+                window.close()  # the user closes right after the worker's check
+            return answer
+
+        window.is_open = is_open_then_user_closes
+        window.ask(cmd="run", nozzle=1, flush=290, pull=80, port="/dev/cu.usbmodem1101", serial="CZPX0001")
+        capability.session.join(5)
+        self.assertEqual(len(orca.notifications), 1, orca.notifications)
+        self.assertTrue(orca.notifications[0][1].startswith("INDX cold pull complete."))
 
     def test_unload_mid_run_queues_cleanup_and_stays_quiet(self):
         port = printer(hang_on="M109 S290")
