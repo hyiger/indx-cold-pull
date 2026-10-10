@@ -398,6 +398,7 @@ class ColdPullSession:
         self.last_outcome = None
         self.last_reason = None  # why a "rejected" run did not start
         self._ending = False     # the procedure is over; the thread is only wrapping up
+        self.run_id = 0          # increments per run that reaches the printer; the page acks by it
 
     # ---- log and state, shared with the UI thread ----
 
@@ -438,7 +439,7 @@ class ColdPullSession:
             start = 0 if full else count
             return {"epoch": self._epoch, "full": full, "start": start, "lines": self._log[start:],
                     "count": len(self._log), "running": self.running, "run_settings": self._run_settings,
-                    "restore": self._restore, "outcome": self.last_outcome}
+                    "restore": self._restore, "outcome": self.last_outcome, "run_id": self.run_id}
 
     # ---- run control ----
 
@@ -463,6 +464,8 @@ class ColdPullSession:
         self.set_restore(True, "PLA", False, settings["tool"], True)
 
     def start_run(self, port, settings):
+        with self._lock:
+            self.run_id += 1
         link = Link(port, self._flags, self.timeout_scale)
         self._thread = threading.Thread(target=self._run, args=(link, dict(settings)),
                                         name="indx-cold-pull", daemon=True)

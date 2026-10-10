@@ -13,6 +13,7 @@ that acts like Buddy firmware: M0 waits for a knob press and sends busy keepaliv
   POST /ports?set=one|two|second|replaced|noserial   which USB serial ports exist
   POST /docks?disabled=1,5   which docks the simulated printer has not enabled (empty: all enabled)
   GET  /sent    every command the printer has received
+  GET  /pending the finished-run result the plugin is still holding for a notification, or null
 """
 import argparse
 import http.server
@@ -172,6 +173,10 @@ def main():
         def do_GET(self):
             if self.path.startswith("/sent"):
                 return self._send(200, json.dumps(printer.sent))
+            if self.path.startswith("/pending"):
+                pending = capability._pending_result
+                return self._send(200, json.dumps(None if pending is None else {"run_id": pending[0],
+                                                                                 "outcome": pending[1]}))
             return self._send(200, page_html(), "text/html; charset=utf-8")
 
         def do_POST(self):

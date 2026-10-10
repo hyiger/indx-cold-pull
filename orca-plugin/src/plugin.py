@@ -87,9 +87,12 @@ class IndxColdPull(orca.script.ScriptPluginCapabilityBase):
         super().__init__()
         self.window = None
         self.unloading = False
-        # A finished run's result until the page has been sent it, so closing the window before the
-        # next poll does not lose it. Guarded because runs end on the worker thread and windows
-        # close on the UI thread.
+        # A finished run's result until the page acknowledges it (the "ack" command). post() only
+        # queues the reply, so a reply carrying the result can still be dropped if the window closes
+        # first; only the page saying it rendered the result proves delivery. If the window closes
+        # before that, the result is posted as a notification, which can rarely repeat what the page
+        # had already shown: a duplicate is preferred to a lost result. Guarded because runs end on
+        # the worker thread and windows close on the UI thread.
         self._result_lock = threading.Lock()
         self._pending_result = None
         self.session = ColdPullSession(on_finish=self._on_run_finished)
@@ -129,7 +132,7 @@ class IndxColdPull(orca.script.ScriptPluginCapabilityBase):
             if self.unloading:
                 return
             if undelivered is not None:
-                self._notify_result(*undelivered)
+                self._notify_result(*undelivered[1:])
             elif self.session.procedure_active:  # a run that is wrapping up notifies for itself
                 _notify("INDX cold pull is still running. Open INDX Cold Pull again from the Plugins "
                         "dialog or the Speed Dial to follow it or cancel it.", warning=False)
@@ -149,13 +152,7 @@ class IndxColdPull(orca.script.ScriptPluginCapabilityBase):
             window.post(reply)
 
     def _snapshot(self, epoch=-1, count=0):
-        """The session state for a reply to the page. Any reply showing the run finished delivers its
-        result, so the pending notification for it is dropped."""
-        snapshot = self.session.snapshot(epoch, count)
-        if not snapshot["running"]:
-            with self._result_lock:
-                self._pending_result = None
-        return snapshot
+        return self.session.snapshot(epoch, count)
 
     def _state(self, message):
         # The printer context rides along with every poll, so the page follows a printer change
@@ -188,6 +185,12 @@ class IndxColdPull(orca.script.ScriptPluginCapabilityBase):
                     "state": self._snapshot()}
         if command == "poll":
             return self._state(message)
+        if command == "ack":
+            # The page rendered this finished run; nothing is left to notify for it.
+            with self._result_lock:
+                if self._pending_result is not None and self._pending_result[0] == message.get("run_id"):
+                    self._pending_result = None
+            return None
         if command == "ports":
             return {"type": "ports", "ports": _list_ports()}
         if command == "destinations":
@@ -312,7 +315,7 @@ class IndxColdPull(orca.script.ScriptPluginCapabilityBase):
         open_now = window is not None and window.is_open()
         with self._result_lock:
             if open_now and self.window is window:
-                self._pending_result = (outcome, restore, reason)
+                self._pending_result = (self.session.run_id, outcome, restore, reason)
                 return
         self._notify_result(outcome, restore, reason)
 

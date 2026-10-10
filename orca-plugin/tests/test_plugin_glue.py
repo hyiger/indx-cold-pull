@@ -232,23 +232,46 @@ class PluginGlue(unittest.TestCase):
         self.assertEqual(orca.notifications, [("regular", orca.notifications[0][1])])
         self.assertTrue(orca.notifications[0][1].startswith("INDX cold pull complete."))
 
-    def test_result_already_shown_by_the_page_is_not_notified_again(self):
+    def test_result_acknowledged_by_the_page_is_not_notified_again(self):
         port = printer()
         _, orca, capability, window = self.load(port_factory=lambda: port)
         window.ask(cmd="run", nozzle=1, flush=290, pull=80, port="/dev/cu.usbmodem1101", serial="CZPX0001")
         capability.session.join(5)
-        self.assertFalse(window.ask(cmd="poll", epoch=-1, count=0)["state"]["running"])
+        state = window.ask(cmd="poll", epoch=-1, count=0)["state"]
+        self.assertFalse(state["running"])
+        window.on_message({"cmd": "ack", "run_id": state["run_id"]})
         window.close()
         self.assertEqual(orca.notifications, [])
 
-    def test_result_shown_by_a_reopened_window_is_not_notified_again(self):
+    def test_result_in_a_reply_the_page_never_acknowledged_is_still_notified(self):
+        port = printer()
+        _, orca, capability, window = self.load(port_factory=lambda: port)
+        window.ask(cmd="run", nozzle=1, flush=290, pull=80, port="/dev/cu.usbmodem1101", serial="CZPX0001")
+        capability.session.join(5)
+        self.assertFalse(window.ask(cmd="poll", epoch=-1, count=0)["state"]["running"])  # queued, then dropped
+        window.close()
+        self.assertEqual(len(orca.notifications), 1)
+        self.assertTrue(orca.notifications[0][1].startswith("INDX cold pull complete."))
+
+    def test_stale_acknowledgement_does_not_clear_a_newer_result(self):
+        port = printer()
+        _, orca, capability, window = self.load(port_factory=lambda: port)
+        window.ask(cmd="run", nozzle=1, flush=290, pull=80, port="/dev/cu.usbmodem1101", serial="CZPX0001")
+        capability.session.join(5)
+        window.on_message({"cmd": "ack", "run_id": capability.session.run_id - 1})
+        window.close()
+        self.assertEqual(len(orca.notifications), 1)
+
+    def test_result_acknowledged_by_a_reopened_window_is_not_notified_again(self):
         port = printer(hook=lambda line, _port: time.sleep(0.2) if line == "M115" else None)
         _, orca, capability, window = self.load(port_factory=lambda: port)
         window.ask(cmd="run", nozzle=1, flush=290, pull=80, port="/dev/cu.usbmodem1101", serial="CZPX0001")
         capability.session.join(5)  # finishes between polls
         capability.execute()        # reopening replaces the old window without a poll
         reopened = orca.windows[-1]
-        self.assertFalse(reopened.ask(cmd="hello")["state"]["running"])
+        state = reopened.ask(cmd="hello")["state"]
+        self.assertFalse(state["running"])
+        reopened.on_message({"cmd": "ack", "run_id": state["run_id"]})
         reopened.close()
         self.assertEqual(orca.notifications, [])
 

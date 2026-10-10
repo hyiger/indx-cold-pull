@@ -307,7 +307,8 @@ const host = window.orca;
 const view = {
   ready: false, epoch: -1, count: 0, running: false, wasRunning: false,
   toolCount: 8, serialAvailable: false, serialReason: "", restoreKey: "",
-  context: null, contextKey: "", pendingContext: null, portIdentity: null, portSerials: {}, pollSentAt: 0,
+  context: null, contextKey: "", pendingContext: null, portIdentity: null, portSerials: {}, ackedRun: 0,
+  pollSentAt: 0,
 };
 
 function send(message) { if (host) host.postMessage(message); }
@@ -452,6 +453,12 @@ function applyState(st) {
       $("restore").scrollIntoView({ behavior: "smooth", block: "nearest" });
   }
   view.wasRunning = st.running;
+  // Tell the plugin once a finished run has been shown here, so it does not also post it as a
+  // notification when this window closes. Sent after rendering, never before.
+  if (!st.running && st.run_id && st.run_id !== view.ackedRun) {
+    view.ackedRun = st.run_id;
+    send({ cmd: "ack", run_id: st.run_id });
+  }
 }
 
 function fillSelect(select, items, valueOf, labelOf, prefer) {
