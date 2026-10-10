@@ -189,7 +189,7 @@
       <li><label><input type="checkbox" class="gate-common">
         <span><b>Filament Sensor → OFF</b>
         <span class="desc">Otherwise the printer grabs and autoloads the filament while you are inserting it by hand.</span></span></label></li>
-      <li><label><input type="checkbox" class="gate-common">
+      <li><label><input type="checkbox" class="gate-common" id="gate-ptfe">
         <span><b>PTFE tube removed from this tool</b>
         <span class="desc">The pulled plug travels up and out of the top port. With the tube fitted there is nowhere for it to go.</span></span></label></li>
       <li><label><input type="checkbox" class="gate-common">
@@ -349,13 +349,16 @@ function updateGate() {
 }
 [...commonGates, serialGate].forEach((c) => c.addEventListener("change", updateGate));
 
-// The filament-type note is about ONE nozzle, so a confirmation made for one says nothing about another.
-$("nozzle").addEventListener("change", () => {
-  if (!$("gate-filament").checked) return;
-  $("gate-filament").checked = false;
+// The PTFE tube and the filament-type note are about ONE nozzle, so a confirmation made for one says
+// nothing about another. Every path that changes the effective nozzle clears them.
+const nozzleGates = [$("gate-ptfe"), $("gate-filament")];
+function clearNozzleGates(reason) {
+  if (!nozzleGates.some((c) => c.checked)) return;
+  nozzleGates.forEach((c) => { c.checked = false; });
   updateGate();
-  say("Nozzle changed: confirm the filament-type item again. The note you made was for the previous nozzle.", "err");
-});
+  say(`${reason} Confirm the PTFE tube and filament-type items again: they were for the previous nozzle.`, "err");
+}
+$("nozzle").addEventListener("change", () => clearNozzleGates("Nozzle changed."));
 
 // The checklist is about one physical printer. A different port, or a different printer on the
 // same path (its USB serial number changed), may be a printer whose sensor, PTFE tube and filament
@@ -417,6 +420,12 @@ function setRunning(on, runSettings) {
   $("force").hidden = !on;
   // The run works from a snapshot taken when Run was pressed; show it and freeze the inputs.
   if (on && runSettings) {
+    // A run started on another printer can use a nozzle the current list lacks; show it anyway.
+    for (let n = $("nozzle").options.length + 1; n <= runSettings.nozzle; n++) {
+      const option = document.createElement("option");
+      option.value = String(n); option.textContent = String(n);
+      $("nozzle").appendChild(option);
+    }
     $("nozzle").value = String(runSettings.nozzle);
     $("flush").value = runSettings.flush;
     $("pull").value = runSettings.pull;
@@ -424,7 +433,9 @@ function setRunning(on, runSettings) {
   ["nozzle", "flush", "pull", "dest"].forEach((id) => { $(id).disabled = on; });
   $("port").disabled = on || !view.serialAvailable;
   updateGate();
-  if (!on && view.pendingContext) applyContext(view.pendingContext);
+  // Rebuild the nozzle list from the current printer once a run ends: a change that waited for the
+  // run, or a list widened above to show the run's nozzle, must not outlive it.
+  if (!on && (view.pendingContext || view.context)) applyContext(view.pendingContext || view.context, true);
 }
 
 function applyState(st) {
@@ -476,9 +487,9 @@ function applyDestinations(dests) {
   updateGate();
 }
 
-function applyContext(ctx) {
+function applyContext(ctx, force) {
   const key = JSON.stringify(ctx);
-  if (key === view.contextKey) return;
+  if (key === view.contextKey && !force) return;
   // A run works from the snapshot taken when Run was pressed; apply a printer change after it.
   if (view.running) { view.pendingContext = ctx; return; }
   const previous = view.context;
@@ -496,17 +507,17 @@ function applyContext(ctx) {
   const after = Math.min(before, ctx.tool_count);
   $("nozzle").value = String(after);
   // Same rule as picking another nozzle by hand: a different printer means a different physical
-  // nozzle, even when its number is unchanged, so the filament-type note no longer applies. Not on
+  // nozzle even when its number is unchanged, and a moved selection is a different nozzle. Not on
   // the first context, which only fills the list.
   const printerChanged = previous !== null &&
     (previous.printer_name !== ctx.printer_name || previous.tool_count !== ctx.tool_count);
-  if (printerChanged && $("gate-filament").checked) {
-    $("gate-filament").checked = false;
-    updateGate();
-    const name = ctx.printer_name || "another printer";
-    say(after !== before
-      ? `The printer selected in OrcaSlicer changed to ${name}, which has ${ctx.tool_count} nozzles, so the selection moved from nozzle ${before} to ${after}. Confirm the filament-type item again for nozzle ${after}.`
-      : `The printer selected in OrcaSlicer changed to ${name}. Confirm the filament-type item again: the note you made was for a nozzle on the previous printer.`, "err");
+  const name = ctx.printer_name || "another printer";
+  if (printerChanged && after !== before) {
+    clearNozzleGates(`The printer selected in OrcaSlicer changed to ${name}, which has ${ctx.tool_count} nozzles, so the selection moved from nozzle ${before} to ${after}.`);
+  } else if (printerChanged) {
+    clearNozzleGates(`The printer selected in OrcaSlicer changed to ${name}.`);
+  } else if (after !== before) {
+    clearNozzleGates(`${name} has ${ctx.tool_count} nozzles, so the selection moved from nozzle ${before} to ${after}.`);
   }
   $("download-all").textContent = `Save all ${ctx.tool_count} nozzles (.zip)`;
   const el = $("ctx");
