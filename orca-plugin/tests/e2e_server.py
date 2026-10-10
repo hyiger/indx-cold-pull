@@ -10,7 +10,7 @@ that acts like Buddy firmware: M0 waits for a knob press and sends busy keepaliv
   POST /knob    press the knob on the simulated printer
   POST /reset   reset the simulated printer after an M112
   POST /printer?model=4t|8t|8tcopy|mk4   change the printer selected in the fake OrcaSlicer
-  POST /ports?set=one|two|second   which USB serial ports exist (the INDX, plus a second printer)
+  POST /ports?set=one|two|second|replaced|noserial   which USB serial ports exist
   GET  /sent    every command the printer has received
 """
 import argparse
@@ -138,11 +138,13 @@ def main():
     harness.addCleanup = lambda fn: None
     module, orca, capability, window = harness.load(preset=glue.INDX_8T, port_factory=printer.open)
     module.list_destinations = lambda: [{"id": "/tmp", "label": "PRO-G40", "kind": "drive"}]
-    first = types.SimpleNamespace(device="/dev/cu.usbmodem1101", vid=0x2C99, product="Original Prusa COREONEINDX",
-                                  description="n/a")
-    second = types.SimpleNamespace(device="/dev/cu.usbmodem2201", vid=0x2C99, product="Original Prusa COREONEINDX",
-                                   description="n/a")
-    port_sets = {"one": [first], "two": [first, second], "second": [second]}
+    def indx(device, serial):
+        return types.SimpleNamespace(device=device, vid=0x2C99, product="Original Prusa COREONEINDX",
+                                     description="n/a", serial_number=serial)
+    first, second = indx("/dev/cu.usbmodem1101", "CZPX0001"), indx("/dev/cu.usbmodem2201", "CZPX0002")
+    port_sets = {"one": [first], "two": [first, second], "second": [second],
+                 "replaced": [indx("/dev/cu.usbmodem1101", "CZPX0003")],
+                 "noserial": [indx("/dev/cu.usbmodem1101", None)]}
     current_ports = {"list": port_sets["one"]}
     sys.modules["serial.tools.list_ports"].comports = lambda: current_ports["list"]
     lock = threading.Lock()

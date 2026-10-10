@@ -108,6 +108,25 @@ class SessionTests(unittest.TestCase):
         self.assertIn('Refusing to continue: this port reports "MK4S", not an INDX.', texts(session))
         self.assertFalse(session.snapshot()["restore"]["fil_changed"])
 
+    def test_nozzle_beyond_the_printers_tool_count_is_refused_before_any_tool_command(self):
+        port = printer(model="FIRMWARE_NAME:Prusa-Firmware-Buddy MACHINE_TYPE:Prusa-COREONEINDX EXTRUDER_COUNT:4\nok\n")
+        session, _ = run(port, nozzle=8)
+        self.assertEqual(port.sent, ["M115"])
+        self.assertEqual(session.last_outcome, "rejected")
+        self.assertIn("Refusing to continue: the printer reports 4 enabled tools, so it has no nozzle 8.", texts(session))
+        self.assertFalse(session.snapshot()["restore"]["fil_changed"])
+
+    def test_nozzle_within_the_tool_count_runs(self):
+        port = printer(model="FIRMWARE_NAME:Prusa-Firmware-Buddy MACHINE_TYPE:Prusa-COREONEINDX EXTRUDER_COUNT:4\nok\n")
+        session, _ = run(port, nozzle=4)
+        self.assertEqual(session.last_outcome, "completed")
+        self.assertEqual(port.sent[1], "M865 I3")
+
+    def test_printer_without_a_tool_count_is_not_gated_on_it(self):
+        port = printer(model="FIRMWARE_NAME:Prusa-Firmware-Buddy MACHINE_TYPE:Prusa-COREONEINDX\nok\n")
+        session, _ = run(port, nozzle=8)
+        self.assertEqual(session.last_outcome, "completed")
+
     def test_unsendable_name_is_never_overwritten(self):
         port = printer(filament="name:PLA Silk\n")
         session, _ = run(port)

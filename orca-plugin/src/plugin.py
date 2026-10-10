@@ -48,7 +48,8 @@ def _list_ports():
     ports = []
     for info in list_ports.comports():
         description = info.product or (info.description if info.description not in (None, "", "n/a") else "")
-        ports.append({"device": info.device, "prusa": info.vid == PRUSA_VID,
+        # The serial number tells two printers apart when one replaces the other on the same path.
+        ports.append({"device": info.device, "serial": info.serial_number or "", "prusa": info.vid == PRUSA_VID,
                       "label": info.device + (f" ({description})" if description else "")})
     ports.sort(key=lambda port: (not port["prusa"], port["device"]))
     return ports
@@ -246,8 +247,15 @@ class IndxColdPull(orca.script.ScriptPluginCapabilityBase):
         if not available:
             self.session.fail_attempt(s, f"USB Serial is unavailable: {reason}")
             return
-        if device not in {port["device"] for port in _list_ports()}:
+        current = {port["device"]: port for port in _list_ports()}.get(device)
+        if current is None:
             self.session.fail_attempt(s, f"{device or 'No port'} is not connected. Refresh the port list and pick the printer.")
+            return
+        # The checklist was confirmed for the printer the page saw on this path. A different serial
+        # number means it was replaced or reconnected since, so that confirmation no longer holds.
+        if current["serial"] != (message.get("serial") or ""):
+            self.session.fail_attempt(s, f"The printer on {device} is not the one the checklist was confirmed for: it was "
+                                         "replaced or reconnected. Refresh the port list and confirm the checklist again.")
             return
         # Opened here, on the UI thread, so OrcaSlicer's permission prompt can show; the worker
         # thread only reads and writes the open port.

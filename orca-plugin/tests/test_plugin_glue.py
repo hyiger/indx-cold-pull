@@ -92,8 +92,9 @@ def fake_serial(port_factory):
     tools = types.ModuleType("serial.tools")
     list_ports = types.ModuleType("serial.tools.list_ports")
     info = types.SimpleNamespace(device="/dev/cu.usbmodem1101", vid=0x2C99, product="Original Prusa CORE One INDX",
-                                 description="n/a")
-    list_ports.comports = lambda: [info]
+                                 description="n/a", serial_number="CZPX0001")
+    list_ports.ports = [info]  # tests swap it to simulate a replug
+    list_ports.comports = lambda: list_ports.ports
     serial.Serial = lambda device, baud, timeout, write_timeout: port_factory()
     serial.tools = tools
     tools.list_ports = list_ports
@@ -172,8 +173,9 @@ class PluginGlue(unittest.TestCase):
         module, orca, capability, window = self.load(port_factory=lambda: port)
         init = window.ask(cmd="hello")
         self.assertEqual(init["ports"][0]["device"], "/dev/cu.usbmodem1101")
+        self.assertEqual(init["ports"][0]["serial"], "CZPX0001")
         self.assertTrue(init["ports"][0]["prusa"])
-        window.ask(cmd="run", nozzle=2, flush=290, pull=80, port="/dev/cu.usbmodem1101")
+        window.ask(cmd="run", nozzle=2, flush=290, pull=80, port="/dev/cu.usbmodem1101", serial="CZPX0001")
         capability.session.join(10)
         state = window.ask(cmd="poll", epoch=-1, count=0)["state"]
         self.assertFalse(state["running"])
@@ -184,7 +186,7 @@ class PluginGlue(unittest.TestCase):
     def test_closing_mid_run_keeps_the_run_and_reopening_reattaches(self):
         port = printer(hang_on="M109 S290")
         module, orca, capability, window = self.load(port_factory=lambda: port)
-        window.ask(cmd="run", nozzle=1, flush=290, pull=80, port="/dev/cu.usbmodem1101")
+        window.ask(cmd="run", nozzle=1, flush=290, pull=80, port="/dev/cu.usbmodem1101", serial="CZPX0001")
         time.sleep(0.1)
         window.close()
         self.assertTrue(capability.session.running)
@@ -204,7 +206,7 @@ class PluginGlue(unittest.TestCase):
     def test_unload_mid_run_queues_cleanup_and_stays_quiet(self):
         port = printer(hang_on="M109 S290")
         module, orca, capability, window = self.load(port_factory=lambda: port)
-        window.ask(cmd="run", nozzle=1, flush=290, pull=80, port="/dev/cu.usbmodem1101")
+        window.ask(cmd="run", nozzle=1, flush=290, pull=80, port="/dev/cu.usbmodem1101", serial="CZPX0001")
         time.sleep(0.1)
         capability.on_unload()
         self.assertFalse(capability.session.running)
@@ -231,6 +233,19 @@ class PluginGlue(unittest.TestCase):
         self.assertFalse(capability.session.running)
         self.assertTrue(state["lines"][-1]["text"].startswith("Not started: nozzle 8 is not on the printer"))
 
+    def test_replugged_printer_on_the_same_path_is_refused(self):
+        opened = []
+        _, _, capability, window = self.load(port_factory=lambda: opened.append(1))
+        window.ask(cmd="hello")
+        list_ports = sys.modules["serial.tools.list_ports"]
+        list_ports.ports = [types.SimpleNamespace(device="/dev/cu.usbmodem1101", vid=0x2C99, description="n/a",
+                                                  product="Original Prusa CORE One INDX", serial_number="CZPX0002")]
+        state = window.ask(cmd="run", nozzle=1, flush=290, pull=80, port="/dev/cu.usbmodem1101",
+                           serial="CZPX0001")["state"]
+        self.assertEqual(opened, [])
+        self.assertFalse(capability.session.running)
+        self.assertIn("is not the one the checklist was confirmed for", state["lines"][-1]["text"])
+
     def test_declined_port_permission_is_reported(self):
         def denied():
             try:
@@ -239,7 +254,8 @@ class PluginGlue(unittest.TestCase):
                 raise OSError("could not open port /dev/cu.usbmodem1101: audit permission required")
 
         module, orca, capability, window = self.load(port_factory=denied)
-        state = window.ask(cmd="run", nozzle=1, flush=290, pull=80, port="/dev/cu.usbmodem1101")["state"]
+        state = window.ask(cmd="run", nozzle=1, flush=290, pull=80, port="/dev/cu.usbmodem1101",
+                           serial="CZPX0001")["state"]
         self.assertIn("permission prompt for /dev/cu.usbmodem1101 was declined", state["lines"][-1]["text"])
         self.assertFalse(state["restore"]["fil_changed"])
 

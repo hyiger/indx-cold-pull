@@ -307,7 +307,7 @@ const host = window.orca;
 const view = {
   ready: false, epoch: -1, count: 0, running: false, wasRunning: false,
   toolCount: 8, serialAvailable: false, serialReason: "", restoreKey: "",
-  context: null, contextKey: "", pendingContext: null, portValue: null, pollSentAt: 0,
+  context: null, contextKey: "", pendingContext: null, portIdentity: null, portSerials: {}, pollSentAt: 0,
 };
 
 function send(message) { if (host) host.postMessage(message); }
@@ -353,22 +353,30 @@ $("nozzle").addEventListener("change", () => {
   say("Nozzle changed: confirm the filament-type item again. The note you made was for the previous nozzle.", "err");
 });
 
-// The checklist is about one physical printer. A different serial port can be a different
-// printer, whose sensor, PTFE tube and filament type nobody has checked, so every item clears.
-function portSelectionChanged() {
+// The checklist is about one physical printer. A different port, or a different printer on the
+// same path (its USB serial number changed), may be a printer whose sensor, PTFE tube and filament
+// type nobody has checked, so every item clears. A port without a serial number cannot be told
+// apart from a replacement, so a refresh clears the checklist for it too.
+function portSelectionChanged(fromRefresh) {
   const value = $("port").value;
-  const previous = view.portValue;
-  view.portValue = value;
-  if (previous === null || value === previous) return;  // the first fill only populates the list
+  const serial = view.portSerials[value] || "";
+  const identity = value ? `${value}|${serial}` : "";
+  const previous = view.portIdentity;
+  view.portIdentity = identity;
+  if (previous === null) return;  // the first fill only populates the list
+  const unknown = fromRefresh === true && value && !serial;
+  if (identity === previous && !unknown) return;
   const gates = [...commonGates, serialGate];
   if (!gates.some((c) => c.checked)) return;
   gates.forEach((c) => { c.checked = false; });
   updateGate();
-  say(value
-    ? `The printer port changed to ${value}. Confirm the items above again for the printer on that port.`
-    : "The printer port is gone. Confirm the items above again once the printer is connected.", "err");
+  const samePath = value && previous.split("|")[0] === value;
+  say(!value ? "The printer port is gone. Confirm the items above again once the printer is connected."
+    : unknown && identity === previous ? `${value} does not report a serial number, so a refresh cannot tell whether it is still the same printer. Confirm the items above again.`
+    : samePath ? `A different printer is now on ${value}. Confirm the items above again for that printer.`
+    : `The printer port changed to ${value}. Confirm the items above again for the printer on that port.`, "err");
 }
-$("port").addEventListener("change", portSelectionChanged);
+$("port").addEventListener("change", () => portSelectionChanged(false));
 
 /* ---------- Put-it-back reminder (showRestore() in index.html) ---------- */
 function showRestore(r) {
@@ -450,6 +458,7 @@ function fillSelect(select, items, valueOf, labelOf, prefer) {
 }
 
 function applyPorts(ports) {
+  view.portSerials = Object.fromEntries(ports.map((p) => [p.device, p.serial || ""]));
   fillSelect($("port"), ports, (p) => p.device, (p) => p.label, (p) => p.prusa);
   if (!ports.length) {
     const option = document.createElement("option");
@@ -457,7 +466,7 @@ function applyPorts(ports) {
     $("port").appendChild(option);
   }
   // A refresh that lost the selected port picks another one; that counts as a change too.
-  portSelectionChanged();
+  portSelectionChanged(true);
   updateGate();
 }
 
@@ -556,7 +565,11 @@ if (host) {
 const withView = (m) => Object.assign(m, { epoch: view.epoch, count: view.count });
 $("download").addEventListener("click", () => send(withView({ cmd: "save", all: false, ...settings(), dest: $("dest").value })));
 $("download-all").addEventListener("click", () => send(withView({ cmd: "save", all: true, ...settings(), dest: $("dest").value })));
-$("run").addEventListener("click", () => { if (!view.running) send(withView({ cmd: "run", ...settings(), port: $("port").value })); });
+$("run").addEventListener("click", () => {
+  if (view.running) return;
+  const port = $("port").value;
+  send(withView({ cmd: "run", ...settings(), port, serial: view.portSerials[port] || "" }));
+});
 $("cancel").addEventListener("click", () => send(withView({ cmd: "cancel" })));
 $("force").addEventListener("click", () => send(withView({ cmd: "force" })));
 $("port-refresh").addEventListener("click", () => send({ cmd: "ports" }));

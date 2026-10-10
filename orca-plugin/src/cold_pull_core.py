@@ -530,6 +530,22 @@ class ColdPullSession:
             confirmed_indx = True
             self.say(f"Confirmed {model}.", "good")
 
+            # Tool gate. Picking a tool whose dock is not enabled is a fatal toolchanger error on
+            # INDX (toolchanger_indx.cpp: "Toolchange to tool that is not enabled"), so refuse a
+            # nozzle the connected printer cannot have before any tool-specific command. M115's
+            # EXTRUDER_COUNT is the number of enabled docks (indx_dock_calibrated_mask.count()),
+            # not the highest index; with gaps in the mask this can refuse a valid high nozzle,
+            # which fails safe. A printer that does not report the count is not gated here.
+            count = re.search(r"EXTRUDER_COUNT:(\d+)", " ".join(info))
+            if count and tool >= int(count.group(1)):
+                enabled = int(count.group(1))
+                self.say(f"Refusing to continue: the printer reports {enabled} enabled tool"
+                         f"{'' if enabled == 1 else 's'}, so it has no nozzle {nozzle}.", "err")
+                self.say("Nothing was sent. Pick a nozzle this printer has: picking a tool whose dock is not "
+                         "enabled crashes the printer.", "err")
+                outcome = "rejected"
+                return
+
             # M865 I<n> echoes the tool's filament as "name:<TYPE>". Only a missing name may end
             # in a value this plugin chose; an unsendable name is left alone, never overwritten.
             self.say("Reading the tool's filament type…", "stage")
