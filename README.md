@@ -180,6 +180,44 @@ Reported upstream: [prusa3d/Prusa-Firmware-Buddy#5399](https://github.com/prusa3
 **The G-code download is unaffected** — a print job is driven by the media queue
 and the normal print state machine, so this timeout never applies to it.
 
+## OrcaSlicer plugin
+
+`orca-plugin/` packages the same procedure as a Python plugin for OrcaSlicer's
+plugin system, which first ships in OrcaSlicer 2.5.0 (available now in the
+nightly builds). It opens a window styled like OrcaSlicer's own dialogs, in light
+or dark mode, and offers both routes:
+
+- **Save G-code** writes the file straight to a mounted USB drive or your
+  Downloads folder.
+- **Run over USB Serial** drives the printer from OrcaSlicer with the same model
+  gate, filament-type read-back and cleanup as this page. The run keeps going if
+  you close the window; open the plugin again to pick it back up.
+
+It reads the printer selected in OrcaSlicer to offer the right number of nozzles
+(4T or 8T), and warns when that printer is not an INDX.
+
+**Install.** Download `indx_cold_pull.py` from the
+[latest release](https://github.com/hyiger/indx-cold-pull/releases/latest). In
+OrcaSlicer, open **Plugins**, pick **Install local plugin** from the arrow next
+to **Browse plugins**, and choose the file. Tick **Activate**: the first time,
+OrcaSlicer installs `pyserial` for the serial route. Run it from the Plugins
+dialog or the Speed Dial.
+
+**Build and test.**
+
+```bash
+cd orca-plugin
+python3 build.py              # writes dist/indx_cold_pull.py
+python3 build.py --install    # ...and copies it into OrcaSlicer's orca_plugins folder
+python3 -m unittest discover -s tests
+```
+
+`src/cold_pull_core.py` holds the generator, the serial step table and the
+guarded serial session, `src/page.html` is the window, and `src/plugin.py` is the
+OrcaSlicer glue. `build.py` inlines all three into one file, because **Install
+local plugin** copies only the `.py`. `tests/e2e_server.py` serves the real page
+and plugin against a simulated printer, for checking the window in a browser.
+
 ## Related
 
 - [PrusaSlicer Filament Edition](https://github.com/hyiger/PrusaSlicer) — the same
@@ -187,7 +225,7 @@ and the normal print state machine, so this timeout never applies to it.
 - [Full guide](https://github.com/hyiger/PrusaSlicer/blob/master/doc/Cold_Pull_Guide.md) —
   prompt-by-prompt walkthrough, how to read the extracted tip, troubleshooting
 
-## Keeping the two in sync
+## Keeping the copies in sync
 
 `generateGcode()` in `index.html` is a port of `generate_cold_pull_gcode()` in the
 PrusaSlicer fork (`src/slic3r/Utils/MaintenanceSerial.cpp`) and is normally kept
@@ -203,6 +241,12 @@ The two are in sync again as of
 ports the issue #3 changes and the 6.9.0 auto-retract work back to the fork;
 byte-identity was verified across several `(tool, flush, pull)` combinations.
 The check fails against a `reference.gcode` generated before that lands.
+
+The OrcaSlicer plugin is a third copy: `orca-plugin/src/cold_pull_core.py` ports
+`generateGcode()` and `buildSteps()` to Python. Its parity test runs both
+functions from this page in node and compares them byte for byte across every
+nozzle and a spread of temperatures, so `python3 -m unittest discover -s tests`
+in `orca-plugin/` fails as soon as the page and the plugin drift apart.
 
 ## Status
 
@@ -220,6 +264,10 @@ briefing prompt, the two-stage warm-up to the pull temperature, the warm wipe,
 and the automatic dock at the end of a serial run — plus the 6.9.0 auto-retract
 workaround and the 80 mm pull are all newer than that hardware run and **have
 not yet been tested on a printer**. Treat a first run as a test.
+
+The OrcaSlicer plugin's serial route has been run on a CORE One INDX up to the
+first prompt, from an OrcaSlicer 2.5.0 nightly. A full run has not been done yet,
+so treat the first one as a test.
 
 **Use at your own risk.** This drives a hot nozzle and a high-current motor.
 
