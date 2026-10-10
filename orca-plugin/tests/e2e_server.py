@@ -10,6 +10,7 @@ that acts like Buddy firmware: M0 waits for a knob press and sends busy keepaliv
   POST /knob    press the knob on the simulated printer
   POST /reset   reset the simulated printer after an M112
   POST /printer?model=4t|8t|8tcopy|mk4   change the printer selected in the fake OrcaSlicer
+  POST /ports?set=one|two|second   which USB serial ports exist (the INDX, plus a second printer)
   GET  /sent    every command the printer has received
 """
 import argparse
@@ -19,6 +20,7 @@ import os
 import sys
 import threading
 import time
+import types
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -136,6 +138,13 @@ def main():
     harness.addCleanup = lambda fn: None
     module, orca, capability, window = harness.load(preset=glue.INDX_8T, port_factory=printer.open)
     module.list_destinations = lambda: [{"id": "/tmp", "label": "PRO-G40", "kind": "drive"}]
+    first = types.SimpleNamespace(device="/dev/cu.usbmodem1101", vid=0x2C99, product="Original Prusa COREONEINDX",
+                                  description="n/a")
+    second = types.SimpleNamespace(device="/dev/cu.usbmodem2201", vid=0x2C99, product="Original Prusa COREONEINDX",
+                                   description="n/a")
+    port_sets = {"one": [first], "two": [first, second], "second": [second]}
+    current_ports = {"list": port_sets["one"]}
+    sys.modules["serial.tools.list_ports"].comports = lambda: current_ports["list"]
     lock = threading.Lock()
 
     class Handler(http.server.BaseHTTPRequestHandler):
@@ -169,6 +178,9 @@ def main():
                 return self._send(200, "{}")
             if self.path == "/reset":
                 printer.reset()
+                return self._send(200, "{}")
+            if self.path.startswith("/ports?set="):
+                current_ports["list"] = port_sets[self.path.split("=", 1)[1]]
                 return self._send(200, "{}")
             if self.path.startswith("/printer?model="):
                 copy = glue.FakePreset("Prusa CORE One INDX 8T HF 0.4 nozzle - Copy", glue.INDX_8T._config)

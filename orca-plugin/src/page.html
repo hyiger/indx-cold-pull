@@ -307,7 +307,7 @@ const host = window.orca;
 const view = {
   ready: false, epoch: -1, count: 0, running: false, wasRunning: false,
   toolCount: 8, serialAvailable: false, serialReason: "", restoreKey: "",
-  context: null, contextKey: "", pendingContext: null, pollSentAt: 0,
+  context: null, contextKey: "", pendingContext: null, portValue: null, pollSentAt: 0,
 };
 
 function send(message) { if (host) host.postMessage(message); }
@@ -352,6 +352,23 @@ $("nozzle").addEventListener("change", () => {
   updateGate();
   say("Nozzle changed: confirm the filament-type item again. The note you made was for the previous nozzle.", "err");
 });
+
+// The checklist is about one physical printer. A different serial port can be a different
+// printer, whose sensor, PTFE tube and filament type nobody has checked, so every item clears.
+function portSelectionChanged() {
+  const value = $("port").value;
+  const previous = view.portValue;
+  view.portValue = value;
+  if (previous === null || value === previous) return;  // the first fill only populates the list
+  const gates = [...commonGates, serialGate];
+  if (!gates.some((c) => c.checked)) return;
+  gates.forEach((c) => { c.checked = false; });
+  updateGate();
+  say(value
+    ? `The printer port changed to ${value}. Confirm the items above again for the printer on that port.`
+    : "The printer port is gone. Confirm the items above again once the printer is connected.", "err");
+}
+$("port").addEventListener("change", portSelectionChanged);
 
 /* ---------- Put-it-back reminder (showRestore() in index.html) ---------- */
 function showRestore(r) {
@@ -439,6 +456,8 @@ function applyPorts(ports) {
     option.value = ""; option.textContent = "No serial ports found. Connect the printer over USB.";
     $("port").appendChild(option);
   }
+  // A refresh that lost the selected port picks another one; that counts as a change too.
+  portSelectionChanged();
   updateGate();
 }
 
