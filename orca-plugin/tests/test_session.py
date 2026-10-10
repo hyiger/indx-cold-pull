@@ -57,7 +57,10 @@ class FakePrinter:
         self.closed = True
 
 
-def printer(filament="name:PETG\n", model=M115_INDX, hang_on=None, hook=None):
+def printer(filament="name:PETG\n", model=M115_INDX, hang_on=None, hook=None, disabled_docks=(),
+            mapping="Tool mapping: \n  Tool 0 -> 0\nEnabled: 0\nok\n"):
+    """Buddy-shaped replies: M105 T<n> answers "ok T:..." for an enabled dock and only
+    "echo: Invalid extruder <n>" (no ok) for a disabled one."""
     def responder(line, port):
         if hook is not None:
             hook(line, port)
@@ -65,6 +68,11 @@ def printer(filament="name:PETG\n", model=M115_INDX, hang_on=None, hook=None):
             return None
         if line == "M115":
             return model
+        if line == "M863":
+            return mapping
+        if line.startswith("M105 T"):
+            dock = int(line[len("M105 T"):])
+            return f"echo: Invalid extruder {dock}\n" if dock in disabled_docks else "ok T:24.8 /0.0 B:24.1 /0.0\n"
         if line.startswith("M865 I"):
             return f"{filament}ok\n"
         return "ok\n"
@@ -92,7 +100,7 @@ class SessionTests(unittest.TestCase):
         port = printer()
         session, s = run(port)
         steps = [cmd for _, cmd, _ in core.build_steps(2, 290, 80, "PETG")]
-        self.assertEqual(port.sent, ["M115", "M865 I2", *steps])
+        self.assertEqual(port.sent, ["M115", "M863", "M105 T2", "M865 I2", *steps])
         self.assertEqual(port.sent[-1], 'M865 S"PETG" L2')
         self.assertEqual(session.last_outcome, "completed")
         self.assertTrue(texts(session)[-1].startswith("Cold pull complete."))
@@ -108,23 +116,38 @@ class SessionTests(unittest.TestCase):
         self.assertIn('Refusing to continue: this port reports "MK4S", not an INDX.', texts(session))
         self.assertFalse(session.snapshot()["restore"]["fil_changed"])
 
-    def test_nozzle_beyond_the_printers_tool_count_is_refused_before_any_tool_command(self):
-        port = printer(model="FIRMWARE_NAME:Prusa-Firmware-Buddy MACHINE_TYPE:Prusa-COREONEINDX EXTRUDER_COUNT:4\nok\n")
-        session, _ = run(port, nozzle=8)
-        self.assertEqual(port.sent, ["M115"])
+    def test_disabled_dock_is_refused_before_any_tool_command(self):
+        # Docks 0, 2, 3 and 4 enabled: a count of 4 would pass nozzle 2, the probe does not.
+        port = printer(disabled_docks=(1, 5, 6, 7))
+        session, _ = run(port, nozzle=2)
+        self.assertEqual(port.sent, ["M115", "M863", "M105 T1"])
         self.assertEqual(session.last_outcome, "rejected")
-        self.assertIn("Refusing to continue: the printer reports 4 enabled tools, so it has no nozzle 8.", texts(session))
+        self.assertIn("Refusing to continue: nozzle 2's dock is not enabled on this printer.", texts(session))
         self.assertFalse(session.snapshot()["restore"]["fil_changed"])
 
-    def test_nozzle_within_the_tool_count_runs(self):
-        port = printer(model="FIRMWARE_NAME:Prusa-Firmware-Buddy MACHINE_TYPE:Prusa-COREONEINDX EXTRUDER_COUNT:4\nok\n")
-        session, _ = run(port, nozzle=4)
+    def test_enabled_dock_above_a_gap_runs(self):
+        port = printer(disabled_docks=(1,))
+        session, _ = run(port, nozzle=5)
         self.assertEqual(session.last_outcome, "completed")
-        self.assertEqual(port.sent[1], "M865 I3")
+        self.assertEqual(port.sent[:4], ["M115", "M863", "M105 T4", "M865 I4"])
 
-    def test_printer_without_a_tool_count_is_not_gated_on_it(self):
-        port = printer(model="FIRMWARE_NAME:Prusa-Firmware-Buddy MACHINE_TYPE:Prusa-COREONEINDX\nok\n")
-        session, _ = run(port, nozzle=8)
+    def test_active_tool_mapping_is_refused(self):
+        port = printer(mapping="Tool mapping: \n  Tool 0 -> 3\nEnabled: 1\nok\n")
+        session, _ = run(port, nozzle=1)
+        self.assertEqual(port.sent, ["M115", "M863"])
+        self.assertEqual(session.last_outcome, "rejected")
+        self.assertTrue(any("tool mapping is active" in t for t in texts(session)))
+
+    def test_unanswered_dock_probe_is_refused(self):
+        port = printer(hang_on="M105 T0")
+        session, _ = run(port, nozzle=1, timeout_scale=0.0005)
+        self.assertEqual(port.sent, ["M115", "M863", "M105 T0"])
+        self.assertEqual(session.last_outcome, "rejected")
+        self.assertIn("Refusing to continue: the printer did not say whether nozzle 1's dock is enabled.", texts(session))
+
+    def test_firmware_without_m863_still_probes_the_dock(self):
+        port = printer(mapping='echo:Unknown command: "M863"\nok\n')
+        session, _ = run(port, nozzle=1)
         self.assertEqual(session.last_outcome, "completed")
 
     def test_unsendable_name_is_never_overwritten(self):

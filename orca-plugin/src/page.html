@@ -330,7 +330,9 @@ function updateGate() {
   const commonOk = commonGates.every((c) => c.checked);
   const remaining = commonGates.filter((c) => !c.checked).length;
   const haveDest = $("dest").options.length > 0;
-  const havePort = !!$("port").value;
+  const port = $("port").value;
+  const portVerifiable = !port || !!view.portSerials[port];
+  const havePort = !!port && portVerifiable;
   $("download").disabled = !commonOk || view.running || !haveDest;
   $("download-all").disabled = !commonOk || view.running || !haveDest;
   $("run").disabled = !commonOk || !serialGate.checked || !view.serialAvailable || !havePort || view.running;
@@ -340,6 +342,8 @@ function updateGate() {
     msg = `Confirm ${remaining} more item${remaining === 1 ? "" : "s"} above to continue.`;
   } else if (view.serialAvailable && !serialGate.checked && !view.running) {
     msg = "The G-code file is ready. Confirm the last item to enable USB Serial as well.";
+  } else if (view.serialAvailable && !portVerifiable && !view.running) {
+    msg = `${port} does not report a USB serial number, so USB Serial cannot verify the printer on it. Prusa printers report one; pick the printer's port.`;
   }
   $("gate-msg").textContent = msg;
 }
@@ -355,28 +359,24 @@ $("nozzle").addEventListener("change", () => {
 
 // The checklist is about one physical printer. A different port, or a different printer on the
 // same path (its USB serial number changed), may be a printer whose sensor, PTFE tube and filament
-// type nobody has checked, so every item clears. A port without a serial number cannot be told
-// apart from a replacement, so a refresh clears the checklist for it too.
-function portSelectionChanged(fromRefresh) {
+// type nobody has checked, so every item clears. A port without a serial number is never run
+// (see updateGate), since a replacement on it cannot be told apart.
+function portSelectionChanged() {
   const value = $("port").value;
-  const serial = view.portSerials[value] || "";
-  const identity = value ? `${value}|${serial}` : "";
+  const identity = value ? `${value}|${view.portSerials[value] || ""}` : "";
   const previous = view.portIdentity;
   view.portIdentity = identity;
-  if (previous === null) return;  // the first fill only populates the list
-  const unknown = fromRefresh === true && value && !serial;
-  if (identity === previous && !unknown) return;
+  if (previous === null || identity === previous) return;  // the first fill only populates the list
   const gates = [...commonGates, serialGate];
   if (!gates.some((c) => c.checked)) return;
   gates.forEach((c) => { c.checked = false; });
   updateGate();
   const samePath = value && previous.split("|")[0] === value;
   say(!value ? "The printer port is gone. Confirm the items above again once the printer is connected."
-    : unknown && identity === previous ? `${value} does not report a serial number, so a refresh cannot tell whether it is still the same printer. Confirm the items above again.`
     : samePath ? `A different printer is now on ${value}. Confirm the items above again for that printer.`
     : `The printer port changed to ${value}. Confirm the items above again for the printer on that port.`, "err");
 }
-$("port").addEventListener("change", () => portSelectionChanged(false));
+$("port").addEventListener("change", portSelectionChanged);
 
 /* ---------- Put-it-back reminder (showRestore() in index.html) ---------- */
 function showRestore(r) {
@@ -466,7 +466,7 @@ function applyPorts(ports) {
     $("port").appendChild(option);
   }
   // A refresh that lost the selected port picks another one; that counts as a change too.
-  portSelectionChanged(true);
+  portSelectionChanged();
   updateGate();
 }
 

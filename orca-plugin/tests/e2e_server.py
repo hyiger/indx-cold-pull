@@ -11,6 +11,7 @@ that acts like Buddy firmware: M0 waits for a knob press and sends busy keepaliv
   POST /reset   reset the simulated printer after an M112
   POST /printer?model=4t|8t|8tcopy|mk4   change the printer selected in the fake OrcaSlicer
   POST /ports?set=one|two|second|replaced|noserial   which USB serial ports exist
+  POST /docks?disabled=1,5   which docks the simulated printer has not enabled (empty: all enabled)
   GET  /sent    every command the printer has received
 """
 import argparse
@@ -40,6 +41,7 @@ class SimulatedIndx:
         self.halted = False
         self.closed = True
         self.timeout = 0.25
+        self.disabled_docks = set()
         threading.Thread(target=self._keepalive, daemon=True).start()
 
     # pyserial surface
@@ -67,6 +69,12 @@ class SimulatedIndx:
                     self.waiting_m0 = False
                 elif line == "M115":
                     self.rx += b"FIRMWARE_NAME:Prusa-Firmware-Buddy 6.9.1+16319 MACHINE_TYPE:Prusa-COREONEINDX\nok\n"
+                elif line == "M863":
+                    self.rx += b"Tool mapping: \n  Tool 0 -> 0\nEnabled: 0\nok\n"
+                elif line.startswith("M105 T"):
+                    dock = int(line[len("M105 T"):])
+                    self.rx += (f"echo: Invalid extruder {dock}\n" if dock in self.disabled_docks
+                                else "ok T:24.8 /0.0 B:24.1 /0.0\n").encode()
                 elif line.startswith("M865 I"):
                     self.rx += b"name:PCTG\nok\n"
                 elif line.startswith("M0 "):
@@ -180,6 +188,10 @@ def main():
                 return self._send(200, "{}")
             if self.path == "/reset":
                 printer.reset()
+                return self._send(200, "{}")
+            if self.path.startswith("/docks?disabled="):
+                value = self.path.split("=", 1)[1]
+                printer.disabled_docks = {int(d) for d in value.split(",") if d}
                 return self._send(200, "{}")
             if self.path.startswith("/ports?set="):
                 current_ports["list"] = port_sets[self.path.split("=", 1)[1]]

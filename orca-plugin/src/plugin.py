@@ -251,8 +251,14 @@ class IndxColdPull(orca.script.ScriptPluginCapabilityBase):
         if current is None:
             self.session.fail_attempt(s, f"{device or 'No port'} is not connected. Refresh the port list and pick the printer.")
             return
-        # The checklist was confirmed for the printer the page saw on this path. A different serial
-        # number means it was replaced or reconnected since, so that confirmation no longer holds.
+        # The checklist was confirmed for the printer the page saw on this path. Without a USB serial
+        # number a replacement on the same path cannot be told apart, so such a port is not used;
+        # Prusa printers always report one. A different serial number means the printer was
+        # replaced or reconnected since, so that confirmation no longer holds.
+        if not current["serial"]:
+            self.session.fail_attempt(s, f"{device} does not report a USB serial number, so the plugin cannot tell "
+                                         "whether it is the printer the checklist was confirmed for. Pick the printer's port.")
+            return
         if current["serial"] != (message.get("serial") or ""):
             self.session.fail_attempt(s, f"The printer on {device} is not the one the checklist was confirmed for: it was "
                                          "replaced or reconnected. Refresh the port list and confirm the checklist again.")

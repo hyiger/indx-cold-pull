@@ -246,6 +246,16 @@ class PluginGlue(unittest.TestCase):
         self.assertFalse(capability.session.running)
         self.assertIn("is not the one the checklist was confirmed for", state["lines"][-1]["text"])
 
+    def test_port_without_a_serial_number_is_not_run(self):
+        opened = []
+        _, _, capability, window = self.load(port_factory=lambda: opened.append(1))
+        sys.modules["serial.tools.list_ports"].ports = [
+            types.SimpleNamespace(device="/dev/ttyACM0", vid=0x1A86, description="USB Serial", product=None,
+                                  serial_number=None)]
+        state = window.ask(cmd="run", nozzle=1, flush=290, pull=80, port="/dev/ttyACM0", serial="")["state"]
+        self.assertEqual(opened, [])
+        self.assertIn("does not report a USB serial number", state["lines"][-1]["text"])
+
     def test_declined_port_permission_is_reported(self):
         def denied():
             try:

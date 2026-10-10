@@ -347,6 +347,28 @@ class Link:
                 if line and collect:
                     lines.append(line)
 
+    def until_line(self, timeout_s, done):
+        """Read lines until done(line) returns something other than None, and return it. For replies
+        that do not end in a bare "ok" (M105 prints its own "ok T:..." and none at all on error)."""
+        deadline = time.monotonic() + timeout_s * self.timeout_scale
+        while True:
+            if self.flags.shutdown:
+                raise ShutdownRequested()
+            if time.monotonic() > deadline:
+                raise RuntimeError("timed out waiting for the printer")
+            try:
+                chunk = self.port.read(self.port.in_waiting or 1)
+            except OSError as error:
+                raise RuntimeError("serial port closed") from error
+            if not chunk:
+                continue
+            self.buf += self.dec.decode(chunk)
+            while "\n" in self.buf:
+                line, self.buf = self.buf.split("\n", 1)
+                result = done(line.strip())
+                if result is not None:
+                    return result
+
     def close(self):
         try:
             self.port.close()
@@ -483,6 +505,34 @@ class ColdPullSession:
                 all_confirmed = False
         return all_confirmed
 
+    def _dock_refusal(self, link, tool, nozzle):
+        """None when nozzle `tool` is a dock the printer has enabled, else why the run must not start."""
+        self.say(f"Checking that nozzle {nozzle}'s dock is enabled…", "stage")
+        link.write("M863")
+        mapping = link.until_ok(10, collect=True)
+        enabled = re.search(r"Enabled:\s*(\S+)", "\n".join(mapping))
+        if enabled and enabled.group(1).lower() not in ("0", "false"):
+            return ("tool mapping is active on the printer, so the plugin cannot check which dock nozzle "
+                    f"{nozzle} is. Finish or stop the print that set it, or restart the printer.")
+        link.write(f"M105 T{tool}")
+
+        def answer(line):
+            if "Invalid extruder" in line:
+                return "disabled"
+            if line == "ok" or line.startswith("ok "):
+                return "enabled"
+            return None
+
+        try:
+            state = link.until_line(10, answer)
+        except RuntimeError as error:
+            if "timed out" not in str(error):
+                raise
+            return f"the printer did not say whether nozzle {nozzle}'s dock is enabled."
+        if state == "disabled":
+            return f"nozzle {nozzle}'s dock is not enabled on this printer."
+        return None
+
     def _send_m112(self, link):
         try:
             link.write("M112")
@@ -530,19 +580,18 @@ class ColdPullSession:
             confirmed_indx = True
             self.say(f"Confirmed {model}.", "good")
 
-            # Tool gate. Picking a tool whose dock is not enabled is a fatal toolchanger error on
-            # INDX (toolchanger_indx.cpp: "Toolchange to tool that is not enabled"), so refuse a
-            # nozzle the connected printer cannot have before any tool-specific command. M115's
-            # EXTRUDER_COUNT is the number of enabled docks (indx_dock_calibrated_mask.count()),
-            # not the highest index; with gaps in the mask this can refuse a valid high nozzle,
-            # which fails safe. A printer that does not report the count is not gated here.
-            count = re.search(r"EXTRUDER_COUNT:(\d+)", " ".join(info))
-            if count and tool >= int(count.group(1)):
-                enabled = int(count.group(1))
-                self.say(f"Refusing to continue: the printer reports {enabled} enabled tool"
-                         f"{'' if enabled == 1 else 's'}, so it has no nozzle {nozzle}.", "err")
-                self.say("Nothing was sent. Pick a nozzle this printer has: picking a tool whose dock is not "
-                         "enabled crashes the printer.", "err")
+            # Dock gate. Picking a tool whose dock is not enabled is a fatal toolchanger error on
+            # INDX (toolchanger_indx.cpp: "Toolchange to tool that is not enabled"), and the count
+            # M115 reports says nothing about which docks those are. M105 T<n> asks about one dock
+            # without side effects: GcodeSuite::get_target_physical_from_optional() answers
+            # "Invalid extruder <n>" and stops for a disabled tool, else M105 prints "ok T:...".
+            # Its T goes through tool mapping while the pick (T<n> M0) does not, so only probe
+            # when M863 reports mapping off (it is reset when a print ends).
+            reason = self._dock_refusal(link, tool, nozzle)
+            if reason is not None:
+                self.say(f"Refusing to continue: {reason}", "err")
+                self.say("Only read-only queries were sent. Picking a tool whose dock is not enabled crashes the "
+                         "printer, so the procedure does not start without that check.", "err")
                 outcome = "rejected"
                 return
 
