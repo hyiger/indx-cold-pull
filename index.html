@@ -103,7 +103,7 @@
       <li><label class="ck"><input type="checkbox" class="gate-common">
         <span><b>Filament Sensor → OFF</b>
         Otherwise the printer grabs and autoloads the filament while you are inserting it by hand.</span></label></li>
-      <li><label class="ck"><input type="checkbox" class="gate-common">
+      <li><label class="ck"><input type="checkbox" class="gate-common" id="gate-ptfe">
         <span><b>PTFE tube removed from this tool</b>
         The pulled plug travels up and out of the top port. With the tube fitted there is nowhere for it to go.</span></label></li>
       <li><label class="ck"><input type="checkbox" class="gate-common">
@@ -450,17 +450,19 @@ function updateGate() {
 }
 [...commonGates, serialGate].forEach((c) => c.addEventListener("change", updateGate));
 
-// The filament-type note is about ONE nozzle, so a confirmation made for nozzle
-// 1 says nothing about nozzle 2. Without this, someone could note nozzle 1's
-// type, tick the box, switch the selector and download a file that marks
-// nozzle 2 FLEX with its original type never recorded anywhere. Clearing the
-// box costs one click and is the only thing that keeps the confirmation
-// attached to the nozzle it was made for.
+// The PTFE tube and the filament-type note are about ONE nozzle, so a
+// confirmation made for nozzle 1 says nothing about nozzle 2. Without this,
+// someone could note nozzle 1's type and pull its tube, tick the boxes, switch
+// the selector and run nozzle 2 with its tube still fitted (the plug then has
+// nowhere to go) or with its original type never recorded anywhere. Clearing
+// the boxes costs two clicks and is the only thing that keeps the
+// confirmations attached to the nozzle they were made for.
+const nozzleGates = [$("gate-ptfe"), $("gate-filament")];
 $("nozzle").addEventListener("change", () => {
-  if (!$("gate-filament").checked) return;
-  $("gate-filament").checked = false;
+  if (!nozzleGates.some((c) => c.checked)) return;
+  nozzleGates.forEach((c) => { c.checked = false; });
   updateGate();
-  say("Nozzle changed — confirm the filament-type item again. The note you made was for the previous nozzle.", "err");
+  say("Nozzle changed: confirm the PTFE tube and filament-type items again. They were for the previous nozzle.", "err");
 });
 
 /** Reveal the put-it-back reminder. The settings turned off above stay off.
