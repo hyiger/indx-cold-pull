@@ -220,6 +220,26 @@ class PluginGlue(unittest.TestCase):
             "INDX cold pull refused: nozzle 1's dock is not enabled on this printer."))
         self.assertNotIn("not an INDX", orca.notifications[-1][1])
 
+    def test_result_finished_between_polls_is_notified_when_the_window_closes(self):
+        port = printer(hook=lambda line, _port: time.sleep(0.2) if line == "M115" else None)
+        _, orca, capability, window = self.load(port_factory=lambda: port)
+        state = window.ask(cmd="run", nozzle=1, flush=290, pull=80, port="/dev/cu.usbmodem1101", serial="CZPX0001")
+        self.assertTrue(state["state"]["running"])
+        capability.session.join(5)  # finishes while the window is open, before any poll
+        self.assertEqual(orca.notifications, [])
+        window.close()
+        self.assertEqual(orca.notifications, [("regular", orca.notifications[0][1])])
+        self.assertTrue(orca.notifications[0][1].startswith("INDX cold pull complete."))
+
+    def test_result_already_shown_by_the_page_is_not_notified_again(self):
+        port = printer()
+        _, orca, capability, window = self.load(port_factory=lambda: port)
+        window.ask(cmd="run", nozzle=1, flush=290, pull=80, port="/dev/cu.usbmodem1101", serial="CZPX0001")
+        capability.session.join(5)
+        self.assertFalse(window.ask(cmd="poll", epoch=-1, count=0)["state"]["running"])
+        window.close()
+        self.assertEqual(orca.notifications, [])
+
     def test_unload_mid_run_queues_cleanup_and_stays_quiet(self):
         port = printer(hang_on="M109 S290")
         module, orca, capability, window = self.load(port_factory=lambda: port)

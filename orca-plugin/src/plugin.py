@@ -20,6 +20,7 @@ on_message (UI thread): it polls for new log lines and state, and sends commands
 
 Built by build.py, which inlines src/cold_pull_core.py and src/page.html into this file.
 """
+import threading
 import traceback
 
 import orca
@@ -86,6 +87,11 @@ class IndxColdPull(orca.script.ScriptPluginCapabilityBase):
         super().__init__()
         self.window = None
         self.unloading = False
+        # A finished run's result until the page has been sent it, so closing the window before the
+        # next poll does not lose it. Guarded because runs end on the worker thread and windows
+        # close on the UI thread.
+        self._result_lock = threading.Lock()
+        self._pending_result = None
         self.session = ColdPullSession(on_finish=self._on_run_finished)
 
     def get_name(self):
@@ -115,11 +121,18 @@ class IndxColdPull(orca.script.ScriptPluginCapabilityBase):
             self._handle_message(message, holder.get("window"))
 
         def on_close():
-            if self.window is holder.get("window"):
+            with self._result_lock:
+                if self.window is not holder.get("window"):
+                    return
                 self.window = None
-                if self.session.running and not self.unloading:
-                    _notify("INDX cold pull is still running. Open INDX Cold Pull again from the Plugins "
-                            "dialog or the Speed Dial to follow it or cancel it.", warning=False)
+                undelivered, self._pending_result = self._pending_result, None
+            if self.unloading:
+                return
+            if undelivered is not None:
+                self._notify_result(*undelivered)
+            elif self.session.running:
+                _notify("INDX cold pull is still running. Open INDX Cold Pull again from the Plugins "
+                        "dialog or the Speed Dial to follow it or cancel it.", warning=False)
 
         window = orca.host.ui.create_window(html=PAGE, title=WINDOW_TITLE, width=640, height=820,
                                             on_message=on_message, on_close=on_close)
@@ -138,8 +151,11 @@ class IndxColdPull(orca.script.ScriptPluginCapabilityBase):
     def _state(self, message):
         # The printer context rides along with every poll, so the page follows a printer change
         # in OrcaSlicer however it happens, without depending on a particular notification.
-        return {"type": "state", "state": self.session.snapshot(message.get("epoch", -1), message.get("count", 0)),
-                "context": _printer_context()}
+        snapshot = self.session.snapshot(message.get("epoch", -1), message.get("count", 0))
+        if not snapshot["running"]:
+            with self._result_lock:
+                self._pending_result = None  # this reply carries the finished run to the page
+        return {"type": "state", "state": snapshot, "context": _printer_context()}
 
     @staticmethod
     def _requested_settings(message, context):
@@ -278,9 +294,17 @@ class IndxColdPull(orca.script.ScriptPluginCapabilityBase):
         self.session.start_run(port, s)
 
     def _on_run_finished(self, outcome, restore, reason=None):
-        # Worker thread. With the window open the page shows the result itself; closed, say it.
-        if self.unloading or (self.window is not None and self.window.is_open()):
+        # Worker thread, before the run reads as finished. With the window open the page shows the
+        # result at its next poll, unless the window closes first; closed, say it now.
+        if self.unloading:
             return
+        with self._result_lock:
+            if self.window is not None and self.window.is_open():
+                self._pending_result = (outcome, restore, reason)
+                return
+        self._notify_result(outcome, restore, reason)
+
+    def _notify_result(self, outcome, restore, reason):
         tool = restore["tool"]
         headline = {"completed": "INDX cold pull complete.", "canceled": "INDX cold pull canceled.",
                     "force-stopped": "INDX cold pull force-stopped: reset the printer before continuing.",
