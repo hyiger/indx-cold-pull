@@ -304,8 +304,13 @@ class IndxColdPull(orca.script.ScriptPluginCapabilityBase):
         # result at its next poll, unless the window closes first; closed, say it now.
         if self.unloading:
             return
+        # Ask the host first and only compare in Python under the lock, so no host call is ever
+        # made while holding it. A close that lands in between clears self.window under the same
+        # lock, so the identity check sends the result to a notification instead.
+        window = self.window
+        open_now = window is not None and window.is_open()
         with self._result_lock:
-            if self.window is not None and self.window.is_open():
+            if open_now and self.window is window:
                 self._pending_result = (outcome, restore, reason)
                 return
         self._notify_result(outcome, restore, reason)
