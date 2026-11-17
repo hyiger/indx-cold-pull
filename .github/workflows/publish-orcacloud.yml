@@ -49,10 +49,13 @@ jobs:
           oidc_token="$(curl -sS -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
             "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=orcacloud" | jq -r .value)"
           version="${GITHUB_REF_NAME#v}"
-          changelog="$(jq -r '.release.body // ""' "$GITHUB_EVENT_PATH" | head -c 4000)"
+          # At most 4000 bytes of the release notes, cut in one process at a character boundary. Piping jq into
+          # head -c would end jq with SIGPIPE on long notes, which pipefail turns into a failed step.
+          changelog="$(python3 -c 'import json, os; body = json.load(open(os.environ["GITHUB_EVENT_PATH"]))["release"].get("body") or ""; print(body.encode()[:4000].decode("utf-8", "ignore"), end="")')"
           metadata="$(jq -cn --arg version "$version" --arg changelog "$changelog" \
             '{version: $version} + (if $changelog == "" then {} else {changelog: $changelog} end)')"
-          args=(-F "metadata=$metadata")
+          # --form-string sends the JSON as it is: -F would read a ";" in it as the start of a field option.
+          args=(--form-string "metadata=$metadata")
           shopt -s nullglob
           for file in $PLUGIN_FILES; do
             args+=(-F "files=@$file")
