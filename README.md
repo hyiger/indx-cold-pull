@@ -218,6 +218,16 @@ OrcaSlicer glue. `build.py` inlines all three into one file, because **Install
 local plugin** copies only the `.py`. `tests/e2e_server.py` serves the real page
 and plugin against a simulated printer, for checking the window in a browser.
 
+**Publishing.** Each GitHub release builds the plugin and publishes it to its
+Orca Cloud listing as `indx_cold_pull_any.py`, through
+`.github/workflows/publish-orcacloud.yml`, which follows
+[Orca Cloud's guide](https://cloud.orcaslicer.com/wiki/). The repository must
+first be connected to the listing, in its **Edit plugin** > **GitHub
+publishing**. Raise `version` in the header of `src/plugin.py`, then create a
+release whose tag is that version with a `v`, such as `v0.2.0`: Orca Cloud needs
+it higher than the listing's current version, and the release notes become the
+changelog. The workflow stops if the tag is not the header's version.
+
 ## Related
 
 - [PrusaSlicer Filament Edition](https://github.com/hyiger/PrusaSlicer) — the same
